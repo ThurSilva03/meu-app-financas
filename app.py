@@ -94,13 +94,25 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        .block-container { padding-top: 1.5rem; padding-bottom: 3rem; }
+        /* Ajuste do espaçamento do topo para não cortar as abas de navegação */
+        .block-container { 
+            padding-top: 5.5rem !important; 
+            padding-bottom: 3.5rem !important; 
+        }
+        
+        button[data-baseweb="tab"] {
+            font-size: 1.05rem !important;
+            padding: 12px 18px !important;
+            font-weight: 500 !important;
+        }
+
         .stMetric {
             background-color: #1e293b !important;
             border: 1px solid #334155;
             border-radius: 10px;
             padding: 15px;
         }
+        
         .card-ciclo {
             background: #1e293b;
             padding: 16px;
@@ -113,7 +125,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Sessão
+# Sessão de Login
 if "user_id" not in st.session_state:
   st.session_state["user_id"] = None
 if "user_nome" not in st.session_state:
@@ -123,7 +135,8 @@ if "user_nome" not in st.session_state:
 # --- Autenticação ---
 def tela_login():
   st.markdown(
-      "<h2 style='text-align: center;'>💼 Apex Finance • Acesso Pessoal</h2>",
+      "<h2 style='text-align: center; margin-top: 2rem;'>💼 Apex Finance •"
+      " Acesso Pessoal</h2>",
       unsafe_allow_html=True,
   )
   col1, col2, col3 = st.columns([1, 1.8, 1])
@@ -224,7 +237,6 @@ metodo_mov = st.sidebar.selectbox(
     "Forma de Pagamento", metodos_disponiveis, key="sb_metodo"
 )
 
-# Campos de parcelas reativos fora do form
 num_parcelas = 1
 fatura_inicio = date.today().strftime("%Y-%m")
 
@@ -361,9 +373,9 @@ with tab_dash:
     mes_filtro = st.selectbox("Selecione o Mês:", meses)
 
     df_view = (
-        df_trans[df_trans["mes_ano"] == mes_filtro]
+        df_trans[df_trans["mes_ano"] == mes_filtro].copy()
         if mes_filtro != "Todos os Meses"
-        else df_trans
+        else df_trans.copy()
     )
 
     rec = df_view[df_view["tipo"] == "Receita"]["valor"].sum()
@@ -393,19 +405,17 @@ with tab_dash:
         st.bar_chart(cat_gasto)
     with cg2:
       st.write("##### Últimos Lançamentos")
-      st.dataframe(
-          df_view[[
-              "id",
-              "data",
-              "descricao",
-              "tipo",
-              "categoria",
-              "metodo",
-              "valor",
-          ]],
-          use_container_width=True,
-          hide_index=True,
-      )
+      df_tabela = df_view[[
+          "id",
+          "data",
+          "descricao",
+          "tipo",
+          "categoria",
+          "metodo",
+          "valor",
+      ]].copy()
+      df_tabela["valor"] = df_tabela["valor"].map("R$ {:,.2f}".format)
+      st.dataframe(df_tabela, use_container_width=True, hide_index=True)
   else:
     st.info("Nenhuma movimentação registrada. Use o menu à esquerda.")
 
@@ -421,14 +431,12 @@ with tab_ciclos:
           "<div class='card-ciclo'><h4>🗓️ Contas do Dia 05</h4></div>",
           unsafe_allow_html=True,
       )
-      df_5 = df_d[df_d["ciclo"] == "Dia 05"]
+      df_5 = df_d[df_d["ciclo"] == "Dia 05"].copy()
       st.metric("Total no Dia 5", f"R$ {df_5['valor'].sum():,.2f}")
       if not df_5.empty:
-        st.dataframe(
-            df_5[["id", "data", "descricao", "categoria", "valor"]],
-            use_container_width=True,
-            hide_index=True,
-        )
+        df_5_tab = df_5[["id", "data", "descricao", "categoria", "valor"]].copy()
+        df_5_tab["valor"] = df_5_tab["valor"].map("R$ {:,.2f}".format)
+        st.dataframe(df_5_tab, use_container_width=True, hide_index=True)
       else:
         st.write("Nenhuma conta associada ao Dia 5.")
 
@@ -437,14 +445,14 @@ with tab_ciclos:
           "<div class='card-ciclo'><h4>🗓️ Contas do Dia 20</h4></div>",
           unsafe_allow_html=True,
       )
-      df_20 = df_d[df_d["ciclo"] == "Dia 20"]
+      df_20 = df_d[df_d["ciclo"] == "Dia 20"].copy()
       st.metric("Total no Dia 20", f"R$ {df_20['valor'].sum():,.2f}")
       if not df_20.empty:
-        st.dataframe(
-            df_20[["id", "data", "descricao", "categoria", "valor"]],
-            use_container_width=True,
-            hide_index=True,
-        )
+        df_20_tab = df_20[
+            ["id", "data", "descricao", "categoria", "valor"]
+        ].copy()
+        df_20_tab["valor"] = df_20_tab["valor"].map("R$ {:,.2f}".format)
+        st.dataframe(df_20_tab, use_container_width=True, hide_index=True)
       else:
         st.write("Nenhuma conta associada ao Dia 20.")
   else:
@@ -465,19 +473,17 @@ with tab_cartao:
     )
 
     st.write("##### Itens e Parcelas Desta Fatura:")
-    st.dataframe(
-        df_fat_view[[
-            "id",
-            "data",
-            "descricao",
-            "categoria",
-            "parcela_atual",
-            "total_parcelas",
-            "valor",
-        ]],
-        use_container_width=True,
-        hide_index=True,
-    )
+    df_exibir_fat = df_fat_view[[
+        "id",
+        "data",
+        "descricao",
+        "categoria",
+        "parcela_atual",
+        "total_parcelas",
+        "valor",
+    ]].copy()
+    df_exibir_fat["valor"] = df_exibir_fat["valor"].map("R$ {:,.2f}".format)
+    st.dataframe(df_exibir_fat, use_container_width=True, hide_index=True)
   else:
     st.info("Nenhuma compra no Cartão de Crédito lançada ainda.")
 
@@ -488,7 +494,7 @@ with tab_parcelas:
   with st.expander("➕ Cadastrar Novo Financiamento ou Parcela Fixa"):
     with st.form("form_cad_parcelamento"):
       c_tit = st.text_input(
-          "Título do Contrato", placeholder="Ex: Financiamento Onix, Empréstimo"
+          "Título do Contrato", placeholder="Ex: Financiamento Veículo"
       )
       c_tipo = st.selectbox(
           "Tipo", ["Financiamento Veículo", "Parcelamento Geral"]
@@ -613,239 +619,4 @@ with tab_gestao:
 
   # SEÇÃO 1: Editar / Apagar Transações
   with sec_trans:
-    if not df_trans.empty:
-      opcoes_trans = {
-          f"#{r['id']} | {r['data']} | {r['descricao']} | R$ {r['valor']:.2f}": (
-              int(r["id"])
-          )
-          for _, r in df_trans.iterrows()
-      }
-      sel_label = st.selectbox(
-          "Escolha o lançamento:", list(opcoes_trans.keys()), key="sel_trans_ed"
-      )
-      id_edit = opcoes_trans[sel_label]
-      registro = df_trans[df_trans["id"] == id_edit].iloc[0]
-
-      st.markdown("---")
-      col_ed1, col_ed2 = st.columns(2)
-
-      with col_ed1:
-        st.write("##### Corrigir Informações")
-        with st.form("form_edita_transacao"):
-          ed_desc = st.text_input("Descrição", value=registro["descricao"])
-          try:
-            dt_val = datetime.strptime(str(registro["data"]), "%Y-%m-%d").date()
-          except Exception:
-            dt_val = date.today()
-          ed_data = st.date_input("Data", value=dt_val)
-
-          lista_tipos = ["Despesa", "Receita"]
-          idx_tipo = (
-              lista_tipos.index(registro["tipo"])
-              if registro["tipo"] in lista_tipos
-              else 0
-          )
-          ed_tipo = st.selectbox("Tipo", lista_tipos, index=idx_tipo)
-
-          lista_cats = [
-              "Alimentação",
-              "Moradia & Contas",
-              "Transporte & Veículo",
-              "Lazer & Compras",
-              "Saúde",
-              "Financiamento/Dívida",
-              "Salário Principal",
-              "Vale / Adiantamento",
-              "Outros",
-          ]
-          idx_cat = (
-              lista_cats.index(registro["categoria"])
-              if registro["categoria"] in lista_cats
-              else 0
-          )
-          ed_cat = st.selectbox("Categoria", lista_cats, index=idx_cat)
-
-          lista_met = [
-              "Pix",
-              "Cartão de Crédito",
-              "Cartão de Débito",
-              "Dinheiro",
-              "Boleto",
-          ]
-          idx_met = (
-              lista_met.index(registro["metodo"])
-              if registro["metodo"] in lista_met
-              else 0
-          )
-          ed_met = st.selectbox("Método", lista_met, index=idx_met)
-
-          lista_ciclo = ["Dia 05", "Dia 20", "Outro Momento"]
-          idx_ciclo = (
-              lista_ciclo.index(registro["ciclo"])
-              if registro["ciclo"] in lista_ciclo
-              else 2
-          )
-          ed_ciclo = st.selectbox(
-              "Vencimento / Ciclo", lista_ciclo, index=idx_ciclo
-          )
-
-          ed_valor = st.number_input(
-              "Valor (R$)",
-              value=float(registro["valor"]),
-              min_value=0.01,
-              format="%.2f",
-              step=5.0,
-          )
-
-          btn_atualizar = st.form_submit_button(
-              "Salvar Alterações", type="primary", use_container_width=True
-          )
-          if btn_atualizar:
-            with get_db() as conn:
-              c = conn.cursor()
-              c.execute(
-                  """
-                                UPDATE transacoes 
-                                SET descricao = ?, data = ?, tipo = ?, categoria = ?, metodo = ?, ciclo = ?, valor = ?
-                                WHERE id = ? AND usuario_id = ?
-                            """,
-                  (
-                      ed_desc.strip(),
-                      str(ed_data),
-                      ed_tipo,
-                      ed_cat,
-                      ed_met,
-                      ed_ciclo,
-                      ed_valor,
-                      id_edit,
-                      USER_ID,
-                  ),
-              )
-              conn.commit()
-            st.success("Lançamento atualizado com sucesso!")
-            st.rerun()
-
-      with col_ed2:
-        st.write("##### Excluir Definitivamente")
-        st.warning(
-            f"Você está prestes a excluir o lançamento **#{id_edit} -"
-            f" {registro['descricao']}**."
-        )
-        if st.button(
-            f"🗑️ Excluir Lançamento #{id_edit}",
-            type="secondary",
-            use_container_width=True,
-        ):
-          with get_db() as conn:
-            c = conn.cursor()
-            c.execute(
-                "DELETE FROM transacoes WHERE id = ? AND usuario_id = ?",
-                (id_edit, USER_ID),
-            )
-            conn.commit()
-          st.success("Registro excluído com sucesso!")
-          st.rerun()
-    else:
-      st.info("Nenhuma transação encontrada para editar.")
-
-  # SEÇÃO 2: Editar / Apagar Financiamentos
-  with sec_parc:
-    if not df_parcelas.empty:
-      opcoes_parc = {
-          f"#{p['id']} | {p['titulo']} ({p['tipo_contrato']})": int(p["id"])
-          for _, p in df_parcelas.iterrows()
-      }
-      sel_p_label = st.selectbox(
-          "Escolha o Financiamento:",
-          list(opcoes_parc.keys()),
-          key="sel_parc_ed",
-      )
-      id_parc_edit = opcoes_parc[sel_p_label]
-      parc_reg = df_parcelas[df_parcelas["id"] == id_parc_edit].iloc[0]
-
-      st.markdown("---")
-      col_pe1, col_pe2 = st.columns(2)
-
-      with col_pe1:
-        st.write("##### Corrigir Contrato")
-        with st.form("form_edita_financiamento"):
-          pe_tit = st.text_input("Título", value=parc_reg["titulo"])
-          pe_tot = st.number_input(
-              "Total de Parcelas",
-              value=int(parc_reg["total_parcelas"]),
-              min_value=1,
-              step=1,
-          )
-          pe_pagas = st.number_input(
-              "Parcelas Pagas",
-              value=int(parc_reg["parcelas_pagas"]),
-              min_value=0,
-              max_value=int(pe_tot),
-              step=1,
-          )
-          pe_val = st.number_input(
-              "Valor da Parcela (R$)",
-              value=float(parc_reg["valor_parcela"]),
-              min_value=0.01,
-              format="%.2f",
-              step=10.0,
-          )
-
-          dias_opc = [5, 20, 10, 15, 25, 30]
-          idx_dia = (
-              dias_opc.index(parc_reg["dia_vencimento"])
-              if parc_reg["dia_vencimento"] in dias_opc
-              else 0
-          )
-          pe_dia = st.selectbox(
-              "Dia de Vencimento", dias_opc, index=idx_dia, key="ed_dia_v"
-          )
-
-          btn_atualiza_parc = st.form_submit_button(
-              "Atualizar Contrato", type="primary", use_container_width=True
-          )
-          if btn_atualiza_parc:
-            with get_db() as conn:
-              c = conn.cursor()
-              c.execute(
-                  """
-                                UPDATE parcelamentos 
-                                SET titulo = ?, total_parcelas = ?, parcelas_pagas = ?, valor_parcela = ?, dia_vencimento = ?
-                                WHERE id = ? AND usuario_id = ?
-                            """,
-                  (
-                      pe_tit.strip(),
-                      int(pe_tot),
-                      int(pe_pagas),
-                      float(pe_val),
-                      int(pe_dia),
-                      id_parc_edit,
-                      USER_ID,
-                  ),
-              )
-              conn.commit()
-            st.success("Financiamento atualizado com sucesso!")
-            st.rerun()
-
-      with col_pe2:
-        st.write("##### Excluir Financiamento")
-        st.warning(
-            f"Excluir o contrato **{parc_reg['titulo']}** removerá o"
-            " acompanhamento."
-        )
-        if st.button(
-            f"🗑️ Excluir Financiamento #{id_parc_edit}",
-            type="secondary",
-            use_container_width=True,
-        ):
-          with get_db() as conn:
-            c = conn.cursor()
-            c.execute(
-                "DELETE FROM parcelamentos WHERE id = ? AND usuario_id = ?",
-                (id_parc_edit, USER_ID),
-            )
-            conn.commit()
-          st.success("Contrato excluído com sucesso!")
-          st.rerun()
-    else:
-      st.info("Nenhum financiamento cadastrado para gerenciar.")
+    if not df_trans.empty
