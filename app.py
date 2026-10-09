@@ -302,6 +302,7 @@ def tela_autenticacao():
           st.warning("Preencha o utilizador e a palavra-passe.")
 
     with tab_cad:
+      st.write("")
       c_nome = st.text_input(
           "Nome Completo", key="cad_nome", placeholder="Ex: Arthur Silva"
       )
@@ -394,8 +395,8 @@ tipo_mov = st.sidebar.selectbox("Tipo", ["Despesa", "Receita"], key="sb_tipo")
 
 if tipo_mov == "Despesa":
   cats = [
-      "Financiamento/Dívida",
       "Moradia & Contas",
+      "Financiamento/Dívida",
       "Transporte & Veículo",
       "Alimentação",
       "Lazer & Compras",
@@ -403,8 +404,8 @@ if tipo_mov == "Despesa":
       "Outros",
   ]
   metodos_disponiveis = [
-      "Boleto",
       "Cartão de Crédito",
+      "Boleto",
       "Pix",
       "Cartão de Débito",
       "Dinheiro",
@@ -419,36 +420,52 @@ metodo_mov = st.sidebar.selectbox(
 )
 
 num_parcelas = 1
-data_primeira_cobranca = date.today()
+data_compra = date.today()
+mes_fatura_alvo = date.today().strftime("%Y-%m")
 
 if tipo_mov == "Despesa":
-  st.sidebar.markdown("📅 **Parcelamento & Prazos**")
-  num_parcelas = st.sidebar.number_input(
-      "Quantidade de Prestações",
-      min_value=1,
-      max_value=360,
-      value=12 if cat_mov == "Financiamento/Dívida" else 1,
-      step=1,
-      key="sb_num_parc",
+  st.sidebar.markdown("📅 **Data & Vencimento**")
+  data_compra = st.sidebar.date_input(
+      "Data da Compra / Registo", value=date.today(), key="sb_dt_compra"
   )
-  data_primeira_cobranca = st.sidebar.date_input(
-      "Data da 1ª Cobrança / Início",
-      value=date.today(),
-      key="sb_dt_primeira_cobranca",
-  )
+
+  if metodo_mov == "Cartão de Crédito":
+    # Permite escolher explicitamente a qual fatura essa compra/despesa pertence
+    mes_fatura_alvo = st.sidebar.text_input(
+        "Mês da Fatura de Destino (AAAA-MM)",
+        value=data_compra.strftime("%Y-%m"),
+        key="sb_mes_fat_alvo",
+        help="Ex: 2026-10 para a fatura de Outubro, 2026-11 para Novembro",
+    )
+    num_parcelas = st.sidebar.number_input(
+        "Quantidade de Prestações",
+        min_value=1,
+        max_value=48,
+        value=1,
+        step=1,
+        key="sb_num_parc_card",
+    )
+  elif cat_mov == "Financiamento/Dívida":
+    num_parcelas = st.sidebar.number_input(
+        "Quantidade de Prestações",
+        min_value=1,
+        max_value=360,
+        value=12,
+        step=1,
+        key="sb_num_parc_fin",
+    )
 
 with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
   desc_mov = st.text_input(
-      "Descrição",
-      placeholder="Ex: Financiamento Onix, Parcela Seguro, Supermercado",
+      "Descrição", placeholder="Ex: Fatura Mercado Pago, Celular, Supermercado"
   )
   ciclo_mov = st.selectbox(
-      "Vencimento / Ciclo", ["Dia 05", "Dia 20", "Outro Momento"]
+      "Vencimento / Ciclo", ["Dia 20", "Dia 05", "Outro Momento"]
   )
   tipo_valor = st.radio(
       "O valor informado abaixo é:",
       ["Valor da Parcela Mensal", "Valor Total da Compra"],
-      index=0 if cat_mov == "Financiamento/Dívida" else 1,
+      index=0 if (cat_mov == "Financiamento/Dívida" and num_parcelas > 1) else 1,
   )
   valor_input = st.number_input(
       "Valor (R$)", min_value=0.01, format="%.2f", step=50.0
@@ -463,37 +480,83 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
       with get_db() as conn:
         c = conn.cursor()
 
-        if tipo_mov == "Despesa" and num_parcelas > 1:
+        # 1. Se for Cartão de Crédito
+        if tipo_mov == "Despesa" and metodo_mov == "Cartão de Crédito":
+          val_parcela = (
+              valor_input / num_parcelas
+              if tipo_valor == "Valor Total da Compra"
+              else valor_input
+          )
+          try:
+            dt_base_fat = datetime.strptime(
+                mes_fatura_alvo.strip(), "%Y-%m"
+            ).date()
+          except Exception:
+            dt_base_fat = data_compra
+
+          for i in range(int(num_parcelas)):
+            dt_fat = dt_base_fat + relativedelta(months=i)
+            fat_str = dt_fat.strftime("%Y-%m")
+            desc_parcelada = (
+                f"{desc_mov.strip()} ({i + 1}/{num_parcelas})"
+                if num_parcelas > 1
+                else desc_mov.strip()
+            )
+            c.execute(
+                """
+                            INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                (
+                    USER_ID,
+                    str(data_compra),
+                    desc_parcelada,
+                    tipo_mov,
+                    cat_mov,
+                    metodo_mov,
+                    ciclo_mov,
+                    val_parcela,
+                    fat_str,
+                    i + 1,
+                    num_parcelas,
+                ),
+            )
+
+        # 2. Se for Financiamento/Dívida parcelado fora do cartão
+        elif (
+            tipo_mov == "Despesa"
+            and num_parcelas > 1
+            and cat_mov == "Financiamento/Dívida"
+        ):
           val_parcela = (
               valor_input
               if tipo_valor == "Valor da Parcela Mensal"
               else (valor_input / num_parcelas)
           )
+          dia_v = data_compra.day
 
-          if cat_mov == "Financiamento/Dívida":
-            dia_v = data_primeira_cobranca.day
-            c.execute(
-                """
-                            INSERT INTO parcelamentos (usuario_id, titulo, tipo_contrato, total_parcelas, parcelas_pagas, valor_parcela, dia_vencimento, data_inicio)
-                            VALUES (?, ?, ?, ?, 0, ?, ?, ?)
-                        """,
-                (
-                    USER_ID,
-                    desc_mov.strip(),
-                    "Financiamento Veículo"
-                    if "veiculo" in desc_mov.lower()
-                    or "veículo" in desc_mov.lower()
-                    or "onix" in desc_mov.lower()
-                    else "Parcelamento Geral",
-                    int(num_parcelas),
-                    float(val_parcela),
-                    int(dia_v),
-                    str(data_primeira_cobranca),
-                ),
-            )
+          c.execute(
+              """
+                        INSERT INTO parcelamentos (usuario_id, titulo, tipo_contrato, total_parcelas, parcelas_pagas, valor_parcela, dia_vencimento, data_inicio)
+                        VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+                    """,
+              (
+                  USER_ID,
+                  desc_mov.strip(),
+                  "Financiamento Veículo"
+                  if "veiculo" in desc_mov.lower()
+                  or "veículo" in desc_mov.lower()
+                  or "onix" in desc_mov.lower()
+                  else "Parcelamento Geral",
+                  int(num_parcelas),
+                  float(val_parcela),
+                  int(dia_v),
+                  str(data_compra),
+              ),
+          )
 
           for i in range(int(num_parcelas)):
-            dt_parcela = data_primeira_cobranca + relativedelta(months=i)
+            dt_parcela = data_compra + relativedelta(months=i)
             fat_str = dt_parcela.strftime("%Y-%m")
             desc_parcelada = f"{desc_mov.strip()} ({i + 1}/{num_parcelas})"
             c.execute(
@@ -515,12 +578,9 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
                     num_parcelas,
                 ),
             )
+
+        # 3. Lançamento Comum (à vista)
         else:
-          fat_unica = (
-              data_primeira_cobranca.strftime("%Y-%m")
-              if metodo_mov == "Cartão de Crédito"
-              else None
-          )
           c.execute(
               """
                         INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
@@ -528,16 +588,17 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
                     """,
               (
                   USER_ID,
-                  str(data_primeira_cobranca),
+                  str(data_compra),
                   desc_mov.strip(),
                   tipo_mov,
                   cat_mov,
                   metodo_mov,
                   ciclo_mov,
                   valor_input,
-                  fat_unica,
+                  None,
               ),
           )
+
         conn.commit()
       st.sidebar.success("Gravado com sucesso!")
       st.rerun()
@@ -572,7 +633,6 @@ if not df_trans.empty:
   for m in df_trans["mes_fatura"].dropna():
     meses_set.add(m)
 
-# Inclui os meses dos contratos em parcelamentos
 if not df_parcelas.empty:
   for _, p_row in df_parcelas.iterrows():
     if "data_inicio" in p_row and p_row["data_inicio"]:
@@ -624,11 +684,10 @@ with tab_dash:
       df_cartao_mes["valor"].sum() if not df_cartao_mes.empty else 0.0
   )
 
-  # B) PARCELAS DE FINANCIAMENTO NO MÊS SELECIONADO
+  # B) Financiamento do Mês
   itens_financiamento_mes = []
   total_financiamentos_mes = 0.0
 
-  # 1. Checa transações salvas explicitamente
   if not df_trans.empty:
     filtro_fin = (
         (df_trans["mes_ano"] == mes_selecionado)
@@ -651,7 +710,6 @@ with tab_dash:
       })
       total_financiamentos_mes += float(r["valor"])
 
-  # 2. Se nenhuma transação gravada foi encontrada para o mês, projeta diretamente a partir da tabela 'parcelamentos'
   if total_financiamentos_mes == 0.0 and not df_parcelas.empty:
     for _, p_row in df_parcelas.iterrows():
       tot = int(p_row["total_parcelas"])
@@ -672,12 +730,9 @@ with tab_dash:
         except Exception:
           dt_ini = date.today()
 
-        # Projeta os meses das parcelas restantes (ex: parcela 37 vence no mês de início, 38 no mês seguinte, etc.)
         for step in range(rest):
           dt_venc_parc = dt_ini + relativedelta(months=step)
-          mes_venc_parc = dt_venc_parc.strftime("%Y-%m")
-
-          if mes_venc_parc == mes_selecionado:
+          if dt_venc_parc.strftime("%Y-%m") == mes_selecionado:
             num_p_atual = pag + step + 1
             val_p = float(p_row["valor_parcela"])
             total_financiamentos_mes += val_p
@@ -781,11 +836,13 @@ with tab_ciclos:
       key="sel_mes_ciclos",
   )
 
-  # Junta transações do mês e parcelas ativas de financiamento projetadas para o mês
   itens_ciclo_todos = []
   if not df_trans.empty:
     df_ciclos_mes = df_trans[
-        (df_trans["mes_ano"] == mes_ciclo_sel)
+        (
+            (df_trans["mes_ano"] == mes_ciclo_sel)
+            | (df_trans["mes_fatura"] == mes_ciclo_sel)
+        )
         & (df_trans["tipo"] == "Despesa")
     ].copy()
     for _, tr in df_ciclos_mes.iterrows():
@@ -799,7 +856,6 @@ with tab_ciclos:
           "valor": float(tr["valor"]),
       })
 
-  # Se houver contrato ativo projetado no mês que ainda não esteja no extrato de transações
   if not df_parcelas.empty:
     for _, p_row in df_parcelas.iterrows():
       tot = int(p_row["total_parcelas"])
@@ -823,7 +879,6 @@ with tab_ciclos:
         for step in range(rest):
           dt_parc_v = dt_ini + relativedelta(months=step)
           if dt_parc_v.strftime("%Y-%m") == mes_ciclo_sel:
-            # Verifica se já não foi listado via transações
             ja_existe = any(
                 p_row["titulo"].lower() in str(x["descricao"]).lower()
                 for x in itens_ciclo_todos
@@ -838,9 +893,7 @@ with tab_ciclos:
               itens_ciclo_todos.append({
                   "id": f"P-{p_row['id']}",
                   "data": str(dt_parc_v),
-                  "descricao": (
-                      f"{p_row['titulo']} ({pag + step + 1}/{tot}) [Contrato]"
-                  ),
+                  "descricao": f"{p_row['titulo']} ({pag + step + 1}/{tot})",
                   "metodo": "Boleto",
                   "categoria": "Financiamento/Dívida",
                   "ciclo": ciclo_calc,
@@ -985,9 +1038,7 @@ with tab_parcelas:
                 ),
             )
             conn.commit()
-          st.success(
-              "Financiamento guardado e parcelas integradas à agenda mensal!"
-          )
+          st.success("Financiamento guardado com sucesso!")
           st.rerun()
         else:
           st.error("Indique o nome do financiamento.")
@@ -1118,6 +1169,7 @@ with tab_gestao:
             "descricao",
             "categoria",
             "metodo",
+            "mes_fatura",
             "ciclo",
             "valor",
         ]].copy()
@@ -1135,8 +1187,8 @@ with tab_gestao:
             primeira_linha = df_grupo.iloc[0]
 
             lista_cats = [
-                "Financiamento/Dívida",
                 "Moradia & Contas",
+                "Financiamento/Dívida",
                 "Transporte & Veículo",
                 "Alimentação",
                 "Lazer & Compras",
@@ -1278,6 +1330,7 @@ with tab_gestao:
 
             lista_cats = [
                 "Moradia & Contas",
+                "Financiamento/Dívida",
                 "Transporte & Veículo",
                 "Alimentação",
                 "Lazer & Compras",
@@ -1294,8 +1347,8 @@ with tab_gestao:
             ed_cat = st.selectbox("Categoria", lista_cats, index=idx_cat)
 
             lista_met = [
-                "Boleto",
                 "Cartão de Crédito",
+                "Boleto",
                 "Pix",
                 "Cartão de Débito",
                 "Dinheiro",
@@ -1307,7 +1360,17 @@ with tab_gestao:
             )
             ed_met = st.selectbox("Método", lista_met, index=idx_met)
 
-            lista_ciclo = ["Dia 05", "Dia 20", "Outro Momento"]
+            # CAMPO DE MÊS DA FATURA (Corrige qualquer lançamento que tenha caído no mês errado)
+            val_mes_fat = (
+                reg_avulso["mes_fatura"]
+                if reg_avulso["mes_fatura"]
+                else ed_data.strftime("%Y-%m")
+            )
+            ed_mes_fat = st.text_input(
+                "Mês da Fatura (AAAA-MM, ex: 2026-10)", value=val_mes_fat
+            )
+
+            lista_ciclo = ["Dia 20", "Dia 05", "Outro Momento"]
             idx_ciclo = (
                 lista_ciclo.index(reg_avulso["ciclo"])
                 if reg_avulso["ciclo"] in lista_ciclo
@@ -1329,12 +1392,17 @@ with tab_gestao:
                 "Guardar Alterações", type="primary", use_container_width=True
             )
             if btn_atualizar:
+              fat_gravar = (
+                  ed_mes_fat.strip()
+                  if ed_met == "Cartão de Crédito"
+                  else reg_avulso["mes_fatura"]
+              )
               with get_db() as conn:
                 c = conn.cursor()
                 c.execute(
                     """
                                     UPDATE transacoes 
-                                    SET descricao = ?, data = ?, tipo = ?, categoria = ?, metodo = ?, ciclo = ?, valor = ?
+                                    SET descricao = ?, data = ?, tipo = ?, categoria = ?, metodo = ?, ciclo = ?, valor = ?, mes_fatura = ?
                                     WHERE id = ? AND usuario_id = ?
                                 """,
                     (
@@ -1345,6 +1413,7 @@ with tab_gestao:
                         ed_met,
                         ed_ciclo,
                         ed_valor,
+                        fat_gravar,
                         id_avulsa,
                         USER_ID,
                     ),
