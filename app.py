@@ -1,6 +1,6 @@
+from datetime import date, datetime
 import hashlib
 import sqlite3
-from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 import pandas as pd
 import streamlit as st
@@ -23,15 +23,24 @@ def get_db():
 def init_db():
   with get_db() as conn:
     c = conn.cursor()
-    # 1. Usuários
+    # 1. Usuários com Email e Celular para recuperação
     c.execute("""
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 nome TEXT NOT NULL,
+                email TEXT,
+                celular TEXT,
                 password_hash TEXT NOT NULL
             )
         """)
+
+    # Atualiza tabela usuarios caso o banco já existisse
+    for col, tipocol in [("email", "TEXT"), ("celular", "TEXT")]:
+      try:
+        c.execute(f"ALTER TABLE usuarios ADD COLUMN {col} {tipocol}")
+      except sqlite3.OperationalError:
+        pass
 
     # 2. Transações
     c.execute("""
@@ -83,7 +92,7 @@ def init_db():
 
 init_db()
 
-# --- Configuração Visual ---
+# --- Configuração Visual Global ---
 st.set_page_config(
     page_title="Apex Finance | Controle Pessoal",
     layout="wide",
@@ -94,27 +103,73 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+        /* Fundo e tipografia geral */
+        .stApp {
+            background-color: #0b0f19;
+            color: #f1f5f9;
+        }
+        
         .block-container { 
-            padding-top: 5.5rem !important; 
+            padding-top: 5rem !important; 
             padding-bottom: 3.5rem !important; 
         }
+
+        /* Estilo Sofisticado das Abas */
         button[data-baseweb="tab"] {
             font-size: 1.05rem !important;
-            padding: 12px 18px !important;
-            font-weight: 500 !important;
+            padding: 12px 20px !important;
+            font-weight: 600 !important;
+            border-radius: 8px 8px 0 0 !important;
         }
+
+        /* Card de Login Premium / Glassmorphism */
+        .login-box {
+            background: linear-gradient(145deg, rgba(30, 41, 59, 0.75), rgba(15, 23, 42, 0.95));
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 35px 30px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4), 0 0 20px rgba(99, 102, 241, 0.15);
+            margin-top: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .login-title {
+            font-size: 2.1rem;
+            font-weight: 800;
+            background: linear-gradient(90deg, #6366f1, #38bdf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 5px;
+        }
+
+        .login-subtitle {
+            color: #94a3b8;
+            font-size: 0.95rem;
+        }
+
+        /* Cards de Métricas e Ciclos */
         .stMetric {
             background-color: #1e293b !important;
-            border: 1px solid #334155;
-            border-radius: 10px;
-            padding: 15px;
+            border: 1px solid #334155 !important;
+            border-radius: 12px !important;
+            padding: 16px !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
         }
+
         .card-ciclo {
             background: #1e293b;
-            padding: 16px;
-            border-radius: 8px;
+            padding: 18px;
+            border-radius: 10px;
             border-left: 5px solid #38bdf8;
-            margin-bottom: 12px;
+            margin-bottom: 14px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
     </style>
 """,
@@ -128,28 +183,45 @@ if "user_nome" not in st.session_state:
   st.session_state["user_nome"] = None
 
 
-# --- Autenticação ---
-def tela_login():
-  st.markdown(
-      "<h2 style='text-align: center; margin-top: 2rem;'>💼 Apex Finance •"
-      " Acesso Pessoal</h2>",
-      unsafe_allow_html=True,
-  )
-  col1, col2, col3 = st.columns([1, 1.8, 1])
+# --- Tela de Login / Cadastro / Recuperação de Senha ---
+def tela_autenticacao():
+  _, col_centro, _ = st.columns([1, 1.6, 1])
 
-  with col2:
-    tab_log, tab_cad = st.tabs(["🔐 Entrar", "📝 Criar Conta"])
+  with col_centro:
+    st.markdown(
+        """
+        <div class="login-box">
+            <div class="login-header">
+                <div class="login-title">💼 Apex Finance</div>
+                <div class="login-subtitle">Gestão Financeira & Controle Inteligente</div>
+            </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
+    tab_log, tab_cad, tab_rec = st.tabs(
+        ["🔐 Acessar", "📝 Criar Conta", "🔑 Recuperar Senha"]
+    )
+
+    # 1. ABA DE LOGIN
     with tab_log:
-      u_log = st.text_input("Usuário", key="txt_login_u")
-      p_log = st.text_input("Senha", type="password", key="txt_login_p")
-      if st.button("Acessar", type="primary", use_container_width=True):
-        if u_log and p_log:
+      st.write("")
+      u_log = st.text_input(
+          "Nome de Usuário", key="txt_login_u", placeholder="Digite seu usuário"
+      )
+      p_log = st.text_input(
+          "Senha",
+          type="password",
+          key="txt_login_p",
+          placeholder="Digite sua senha",
+      )
+      st.write("")
+      if st.button("Entrar no Sistema", type="primary", use_container_width=True):
+        if u_log.strip() and p_log.strip():
           with get_db() as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT id, nome, password_hash FROM usuarios WHERE username ="
-                " ?",
+                "SELECT id, nome, password_hash FROM usuarios WHERE lower(username) = ?",
                 (u_log.strip().lower(),),
             )
             usuario = c.fetchone()
@@ -158,41 +230,142 @@ def tela_login():
               st.session_state["user_nome"] = str(usuario["nome"])
               st.rerun()
             else:
-              st.error("Usuário ou senha inválidos.")
+              st.error("Usuário ou senha incorretos.")
         else:
-          st.warning("Preencha todos os campos.")
+          st.warning("Preencha o usuário e a senha para entrar.")
 
+    # 2. ABA DE CADASTRO COM TRAVA DE DUPLICIDADE
     with tab_cad:
-      c_nome = st.text_input("Seu Nome Completo", key="cad_nome")
+      st.write("")
+      c_nome = st.text_input(
+          "Nome Completo", key="cad_nome", placeholder="Ex: Arthur Silva"
+      )
       c_user = st.text_input(
-          "Escolha um Usuário (ex: arthur)", key="cad_user"
+          "Nome de Usuário Único", key="cad_user", placeholder="Ex: arthur_bidu"
       ).lower()
-      c_pass = st.text_input("Escolha uma Senha", type="password", key="cad_p")
-      if st.button("Cadastrar Perfil", use_container_width=True):
-        if c_nome.strip() and c_user.strip() and c_pass.strip():
-          try:
+      c_email = st.text_input(
+          "E-mail", key="cad_email", placeholder="seuemail@exemplo.com"
+      ).lower()
+      c_celular = st.text_input(
+          "Celular com DDD (WhatsApp)",
+          key="cad_cel",
+          placeholder="Ex: 11999998888",
+      )
+      c_pass = st.text_input(
+          "Definir Senha",
+          type="password",
+          key="cad_p",
+          placeholder="Mínimo 4 caracteres",
+      )
+      st.write("")
+      if st.button("Criar Minha Conta", use_container_width=True):
+        if (
+            c_nome.strip()
+            and c_user.strip()
+            and c_pass.strip()
+            and c_email.strip()
+            and c_celular.strip()
+        ):
+          if len(c_pass.strip()) < 4:
+            st.error("A senha deve conter no mínimo 4 dígitos.")
+          else:
             with get_db() as conn:
               c = conn.cursor()
+              # Verifica se já existe um usuário com esse mesmo username ou nome completo
               c.execute(
-                  """
-                                INSERT INTO usuarios (username, nome, password_hash)
-                                VALUES (?, ?, ?)
-                            """,
-                  (c_user.strip(), c_nome.strip(), hash_password(c_pass)),
+                  "SELECT id FROM usuarios WHERE lower(username) = ? OR"
+                  " lower(nome) = ?",
+                  (c_user.strip().lower(), c_nome.strip().lower()),
+              )
+              existente = c.fetchone()
+
+              if existente:
+                st.error(
+                    "❌ Já existe um cadastro com este nome de usuário ou nome"
+                    " completo. Escolha outro."
+                )
+              else:
+                c.execute(
+                    """
+                                    INSERT INTO usuarios (username, nome, email, celular, password_hash)
+                                    VALUES (?, ?, ?, ?, ?)
+                                """,
+                    (
+                        c_user.strip().lower(),
+                        c_nome.strip(),
+                        c_email.strip().lower(),
+                        c_celular.strip(),
+                        hash_password(c_pass),
+                    ),
+                )
+                conn.commit()
+                st.success(
+                    "✅ Conta criada com sucesso! Mude para a aba 'Acessar' para"
+                    " entrar."
+                )
+        else:
+          st.warning("Preencha todos os campos obrigatórios para o cadastro.")
+
+    # 3. ABA DE RECUPERAÇÃO DE SENHA
+    with tab_rec:
+      st.write("")
+      st.caption(
+          "Confirme seu usuário e o e-mail ou celular cadastrado para redefinir"
+          " sua senha."
+      )
+      r_user = st.text_input(
+          "Seu Usuário", key="rec_u", placeholder="Digite seu usuário cadastrado"
+      ).lower()
+      r_contato = st.text_input(
+          "E-mail ou Celular Cadastrado",
+          key="rec_cont",
+          placeholder="Ex: seuemail@exemplo.com ou 11999998888",
+      ).lower()
+      r_new_pass = st.text_input(
+          "Nova Senha",
+          type="password",
+          key="rec_np",
+          placeholder="Digite a nova senha",
+      )
+      st.write("")
+      if st.button("Redefinir Senha", use_container_width=True):
+        if r_user.strip() and r_contato.strip() and r_new_pass.strip():
+          with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                """
+                            SELECT id FROM usuarios 
+                            WHERE lower(username) = ? AND (lower(email) = ? OR celular = ?)
+                        """,
+                (r_user.strip().lower(), r_contato.strip(), r_contato.strip()),
+            )
+            encontrado = c.fetchone()
+
+            if encontrado:
+              c.execute(
+                  "UPDATE usuarios SET password_hash = ? WHERE id = ?",
+                  (hash_password(r_new_pass.strip()), encontrado["id"]),
               )
               conn.commit()
-            st.success("Conta criada! Pode entrar pela aba Entrar.")
-          except sqlite3.IntegrityError:
-            st.error("Nome de usuário já em uso.")
+              st.success(
+                  "🎉 Senha alterada com sucesso! Você já pode entrar com a"
+                  " nova senha."
+              )
+            else:
+              st.error(
+                  "Dados não conferem com nenhum usuário ativo no sistema."
+              )
         else:
-          st.warning("Preencha todos os dados.")
+          st.warning("Preencha todos os campos para redefinir a senha.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 if not st.session_state["user_id"]:
-  tela_login()
+  tela_autenticacao()
   st.stop()
 
-# --- Usuário Logado ---
+# --- Painel do Usuário Logado ---
 USER_ID = st.session_state["user_id"]
 
 st.sidebar.markdown(f"### Olá, **{st.session_state['user_nome']}** 👋")
@@ -356,7 +529,7 @@ with get_db() as conn:
       params=(USER_ID,),
   )
 
-# 1. VISÃO GERAL (FOCADA EXCLUSIVAMENTE NOS GASTOS DO MÊS)
+# 1. VISÃO GERAL (FOCO EXCLUSIVO NOS GASTOS DO MÊS)
 with tab_dash:
   st.subheader("📊 Gastos e Compromissos do Mês")
 
@@ -379,7 +552,7 @@ with tab_dash:
       "Selecione o Mês:", meses_ordenados, index=idx_padrao
   )
 
-  # 1. Cartão de Crédito no Mês Selecionado
+  # 1. Cartão de Crédito
   total_cartao_mes = 0.0
   df_cartao_mes = pd.DataFrame()
   if not df_trans.empty:
@@ -390,7 +563,7 @@ with tab_dash:
     ].copy()
     total_cartao_mes = df_cartao_mes["valor"].sum()
 
-  # 2. Parcelas de Financiamentos Ativos do Mês
+  # 2. Financiamentos Ativos
   total_financiamentos_mes = 0.0
   fin_ativos = pd.DataFrame()
   if not df_parcelas.empty:
@@ -399,7 +572,7 @@ with tab_dash:
     ].copy()
     total_financiamentos_mes = fin_ativos["valor_parcela"].sum()
 
-  # 3. Outras despesas do mês (Pix, Boleto, etc. exceto cartão e financiamentos)
+  # 3. Outras Contas Avulsas do Mês
   total_outros_mes = 0.0
   df_outros_mes = pd.DataFrame()
   if not df_trans.empty:
@@ -415,7 +588,7 @@ with tab_dash:
       total_cartao_mes + total_financiamentos_mes + total_outros_mes
   )
 
-  # Quatro Cards Principais
+  # Métricas
   c1, c2, c3, c4 = st.columns(4)
   c1.metric("💳 Fatura do Cartão", f"R$ {total_cartao_mes:,.2f}")
   c2.metric("🚗 Parcela Financiamento", f"R$ {total_financiamentos_mes:,.2f}")
@@ -430,7 +603,6 @@ with tab_dash:
   st.divider()
 
   col_det1, col_det2 = st.columns(2)
-
   with col_det1:
     st.write(f"##### 💳 Detalhes da Fatura do Cartão ({mes_selecionado})")
     if not df_cartao_mes.empty:
@@ -446,7 +618,7 @@ with tab_dash:
       )
       st.dataframe(df_cartao_show, use_container_width=True, hide_index=True)
     else:
-      st.info("Nenhuma compra ou parcela de cartão prevista para este mês.")
+      st.info("Nenhuma fatura de cartão prevista para este mês.")
 
   with col_det2:
     st.write("##### 🚗 Parcelas de Financiamentos Ativos")
