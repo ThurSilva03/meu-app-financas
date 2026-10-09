@@ -23,7 +23,7 @@ def get_db():
 def init_db():
   with get_db() as conn:
     c = conn.cursor()
-    # 1. Usuários
+    # 1. Utilizadores
     c.execute("""
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,7 +93,7 @@ init_db()
 
 # --- Configuração Visual Global ---
 st.set_page_config(
-    page_title="Apex Finance | Controle Pessoal",
+    page_title="Apex Finance | Gestão Pessoal",
     layout="wide",
     page_icon="💳",
     initial_sidebar_state="expanded",
@@ -169,40 +169,42 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Sessão
+# Gestão de Sessão
 if "user_id" not in st.session_state:
   st.session_state["user_id"] = None
 if "user_nome" not in st.session_state:
   st.session_state["user_nome"] = None
 
 
-# --- Modal de Recuperação de Senha ---
+# --- Janela de Recuperação de Palavra-passe ---
 @st.dialog("🔑 Recuperação de Acesso")
 def modal_recuperar_senha():
   st.caption(
-      "Informe o seu usuário e o e-mail ou celular cadastrado para validar sua"
-      " identidade."
+      "Indique o seu nome de utilizador e o e-mail ou telemóvel registado para"
+      " validar a sua identidade."
   )
   r_user = st.text_input(
-      "Usuário", key="rec_u", placeholder="Digite seu usuário"
+      "Nome de Utilizador",
+      key="rec_u",
+      placeholder="Introduza o nome de utilizador",
   ).lower()
   r_contato = st.text_input(
-      "E-mail ou Celular cadastrado",
+      "E-mail ou Telemóvel Registado",
       key="rec_cont",
       placeholder="exemplo@email.com ou 11999998888",
   ).lower()
   r_new_pass = st.text_input(
-      "Nova Senha",
+      "Nova Palavra-passe",
       type="password",
       key="rec_np",
       placeholder="Mínimo 4 caracteres",
   )
 
   st.write("")
-  if st.button("Salvar Nova Senha", type="primary", use_container_width=True):
+  if st.button("Guardar Nova Palavra-passe", type="primary", use_container_width=True):
     if r_user.strip() and r_contato.strip() and r_new_pass.strip():
       if len(r_new_pass.strip()) < 4:
-        st.error("A nova senha deve ter no mínimo 4 caracteres.")
+        st.error("A nova palavra-passe deve ter no mínimo 4 caracteres.")
       else:
         with get_db() as conn:
           c = conn.cursor()
@@ -221,16 +223,16 @@ def modal_recuperar_senha():
             )
             conn.commit()
             st.success(
-                "🎉 Senha alterada com sucesso! Você já pode fechar esta janela"
-                " e entrar."
+                "🎉 Palavra-passe alterada com sucesso! Feche esta janela para"
+                " iniciar sessão."
             )
           else:
-            st.error("Dados informados não conferem com o cadastro.")
+            st.error("Os dados introduzidos não coincidem com o registo.")
     else:
-      st.warning("Preencha todos os campos para recuperar a senha.")
+      st.warning("Preencha todos os campos obrigatórios.")
 
 
-# --- Tela de Autenticação ---
+# --- Ecrã de Autenticação ---
 def tela_autenticacao():
   _, col_centro, _ = st.columns([1, 1.4, 1])
 
@@ -240,24 +242,26 @@ def tela_autenticacao():
         <div class="login-box">
             <div class="login-header">
                 <div class="login-title">💼 Apex Finance</div>
-                <div class="login-subtitle">Gestão Financeira & Controle Inteligente</div>
+                <div class="login-subtitle">Gestão Financeira & Controlo Inteligente</div>
             </div>
         """,
         unsafe_allow_html=True,
     )
 
-    tab_log, tab_cad = st.tabs(["🔐 Acessar", "📝 Criar Conta"])
+    tab_log, tab_cad = st.tabs(["🔐 Entrar", "📝 Criar Conta"])
 
     with tab_log:
       st.write("")
       u_log = st.text_input(
-          "Nome de Usuário", key="txt_login_u", placeholder="Digite seu usuário"
+          "Nome de Utilizador",
+          key="txt_login_u",
+          placeholder="Introduza o seu utilizador",
       )
       p_log = st.text_input(
-          "Senha",
+          "Palavra-passe",
           type="password",
           key="txt_login_p",
-          placeholder="Digite sua senha",
+          placeholder="Introduza a sua palavra-passe",
       )
 
       col_esq, col_dir = st.columns([1, 1.3])
@@ -285,9 +289,9 @@ def tela_autenticacao():
               st.session_state["user_nome"] = str(usuario["nome"])
               st.rerun()
             else:
-              st.error("Usuário ou senha incorretos.")
+              st.error("Utilizador ou palavra-passe incorretos.")
         else:
-          st.warning("Preencha usuário e senha.")
+          st.warning("Preencha o utilizador e a palavra-passe.")
 
     with tab_cad:
       st.write("")
@@ -295,7 +299,7 @@ def tela_autenticacao():
           "Nome Completo", key="cad_nome", placeholder="Ex: Arthur Silva"
       )
       c_user = st.text_input(
-          "Nome de Usuário Único",
+          "Nome de Utilizador Único",
           key="cad_user",
           placeholder="Ex: arthursilva",
       ).lower()
@@ -303,18 +307,18 @@ def tela_autenticacao():
           "E-mail", key="cad_email", placeholder="seuemail@exemplo.com"
       ).lower()
       c_celular = st.text_input(
-          "Celular com DDD (WhatsApp)",
+          "Telemóvel com DDD",
           key="cad_cel",
           placeholder="Ex: 11999998888",
       )
       c_pass = st.text_input(
-          "Definir Senha",
+          "Definir Palavra-passe",
           type="password",
           key="cad_p",
           placeholder="Mínimo 4 caracteres",
       )
       st.write("")
-      if st.button("Criar Minha Conta", use_container_width=True):
+      if st.button("Criar Conta", use_container_width=True):
         if (
             c_nome.strip()
             and c_user.strip()
@@ -323,7 +327,7 @@ def tela_autenticacao():
             and c_celular.strip()
         ):
           if len(c_pass.strip()) < 4:
-            st.error("A senha deve conter no mínimo 4 caracteres.")
+            st.error("A palavra-passe deve conter pelo menos 4 caracteres.")
           else:
             with get_db() as conn:
               c = conn.cursor()
@@ -336,7 +340,7 @@ def tela_autenticacao():
 
               if existente:
                 st.error(
-                    "❌ Já existe um cadastro com este nome de usuário ou nome"
+                    "❌ Já existe uma conta com este nome de utilizador ou nome"
                     " completo."
                 )
               else:
@@ -354,7 +358,7 @@ def tela_autenticacao():
                     ),
                 )
                 conn.commit()
-                st.success("✅ Conta criada com sucesso! Acesse pela aba 'Acessar'.")
+                st.success("✅ Conta registada com sucesso! Aceda ao separador 'Entrar'.")
         else:
           st.warning("Preencha todos os campos obrigatórios.")
 
@@ -365,19 +369,19 @@ if not st.session_state["user_id"]:
   tela_autenticacao()
   st.stop()
 
-# --- Painel do Usuário Logado ---
+# --- Painel do Utilizador ---
 USER_ID = st.session_state["user_id"]
 
 st.sidebar.markdown(f"### Olá, **{st.session_state['user_nome']}** 👋")
-if st.sidebar.button("Sair da Conta"):
+if st.sidebar.button("Terminar Sessão"):
   st.session_state["user_id"] = None
   st.session_state["user_nome"] = None
   st.rerun()
 
 st.sidebar.divider()
 
-# --- Lançamento Rápido na Barra Lateral ---
-st.sidebar.header("➕ Novo Registro")
+# --- Barra Lateral: Novo Registo ---
+st.sidebar.header("➕ Novo Registo")
 
 tipo_mov = st.sidebar.selectbox("Tipo", ["Despesa", "Receita"], key="sb_tipo")
 
@@ -406,14 +410,13 @@ metodo_mov = st.sidebar.selectbox(
     "Forma de Pagamento", metodos_disponiveis, key="sb_metodo"
 )
 
-# Agora permite parcelas para QUALQUER despesa (Boleto, Cartão de Crédito, Pix, Débito)
 num_parcelas = 1
 mes_inicio_parcela = date.today().strftime("%Y-%m")
 
 if tipo_mov == "Despesa":
   st.sidebar.markdown("📅 **Parcelamento / Quantidade**")
   num_parcelas = st.sidebar.number_input(
-      "Quantidade de Parcelas",
+      "Quantidade de Prestações",
       min_value=1,
       max_value=360,
       value=1,
@@ -441,14 +444,13 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
   )
 
   salvar_btn = st.form_submit_button(
-      "Salvar Registro", use_container_width=True
+      "Guardar Registo", use_container_width=True
   )
 
   if salvar_btn:
     if desc_mov.strip():
       with get_db() as conn:
         c = conn.cursor()
-        # Se for parcelado em mais de 1x
         if tipo_mov == "Despesa" and num_parcelas > 1:
           val_parcela = valor_mov / num_parcelas
           try:
@@ -459,11 +461,10 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
           for i in range(int(num_parcelas)):
             dt_fat = dt_base + relativedelta(months=i)
             fat_str = dt_fat.strftime("%Y-%m")
-            # Ajusta a data de vencimento mês a mês mantendo o dia original
             try:
-              data_parcela = date_mov + relativedelta(months=i)
+              data_parcela = data_mov + relativedelta(months=i)
             except Exception:
-              data_parcela = date_mov
+              data_parcela = data_mov
 
             desc_parcelada = f"{desc_mov.strip()} ({i + 1}/{num_parcelas})"
             c.execute(
@@ -486,7 +487,6 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
                 ),
             )
         else:
-          # Lançamento à vista
           fat_unica = (
               mes_inicio_parcela if metodo_mov == "Cartão de Crédito" else None
           )
@@ -508,12 +508,12 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
               ),
           )
         conn.commit()
-      st.sidebar.success("Registro gravado com sucesso!")
+      st.sidebar.success("Registo guardado com sucesso!")
       st.rerun()
     else:
-      st.sidebar.error("Informe a descrição.")
+      st.sidebar.error("Indique uma descrição válida.")
 
-# --- Abas Principais ---
+# --- Separadores de Navegação ---
 tab_dash, tab_ciclos, tab_cartao, tab_parcelas, tab_gestao = st.tabs([
     "📊 Visão Geral do Mês",
     "🗓️ Ciclos Dia 5 / Dia 20",
@@ -535,7 +535,7 @@ with get_db() as conn:
       params=(USER_ID,),
   )
 
-# 1. VISÃO GERAL (COMPROMISSOS DO MÊS)
+# 1. VISÃO GERAL
 with tab_dash:
   st.subheader("📊 Gastos e Compromissos do Mês")
 
@@ -558,7 +558,7 @@ with tab_dash:
       "Selecione o Mês:", meses_ordenados, index=idx_padrao
   )
 
-  # 1. Cartão de Crédito
+  # 1. Fatura do Cartão
   total_cartao_mes = 0.0
   df_cartao_mes = pd.DataFrame()
   if not df_trans.empty:
@@ -569,7 +569,7 @@ with tab_dash:
     ].copy()
     total_cartao_mes = df_cartao_mes["valor"].sum()
 
-  # 2. Parcelas de Financiamentos Fixos Cadastrados
+  # 2. Financiamentos Ativos
   total_financiamentos_mes = 0.0
   fin_ativos = pd.DataFrame()
   if not df_parcelas.empty:
@@ -578,7 +578,7 @@ with tab_dash:
     ].copy()
     total_financiamentos_mes = fin_ativos["valor_parcela"].sum()
 
-  # 3. Outros compromissos/boletos/despesas que vencem no mês
+  # 3. Outras Saídas do Mês
   total_outros_mes = 0.0
   df_outros_mes = pd.DataFrame()
   if not df_trans.empty:
@@ -597,7 +597,6 @@ with tab_dash:
       total_cartao_mes + total_financiamentos_mes + total_outros_mes
   )
 
-  # Cards de Resumo
   c1, c2, c3, c4 = st.columns(4)
   c1.metric("💳 Fatura do Cartão", f"R$ {total_cartao_mes:,.2f}")
   c2.metric("🚗 Parcela Financiamento", f"R$ {total_financiamentos_mes:,.2f}")
@@ -647,7 +646,7 @@ with tab_dash:
     else:
       st.info("Nenhum boleto ou despesa avulsa para este mês.")
 
-# 2. SEPARAÇÃO DIA 5 E DIA 20
+# 2. CICLOS DIA 5 E DIA 20
 with tab_ciclos:
   st.subheader("Separação de Gastos por Ciclo de Vencimento")
   if not df_trans.empty:
@@ -698,9 +697,9 @@ with tab_ciclos:
   else:
     st.info("Sem dados para exibir ciclos.")
 
-# 3. FATURAS DE CARTÃO DE CRÉDITO
+# 3. FATURAS DO CARTÃO
 with tab_cartao:
-  st.subheader("Controle Detalhado de Faturas do Cartão")
+  st.subheader("Controlo Detalhado de Faturas do Cartão")
   df_card = df_trans[df_trans["metodo"] == "Cartão de Crédito"].copy()
   if not df_card.empty:
     faturas = sorted(df_card["mes_fatura"].dropna().unique(), reverse=True)
@@ -725,13 +724,13 @@ with tab_cartao:
     df_exibir_fat["valor"] = df_exibir_fat["valor"].map("R$ {:,.2f}".format)
     st.dataframe(df_exibir_fat, use_container_width=True, hide_index=True)
   else:
-    st.info("Nenhuma compra no Cartão de Crédito lançada ainda.")
+    st.info("Nenhuma compra efetuada no Cartão de Crédito.")
 
 # 4. FINANCIAMENTOS E CONTRATOS FIXOS
 with tab_parcelas:
   st.subheader("Financiamentos e Despesas Parceladas Fixas")
 
-  with st.expander("➕ Cadastrar Novo Financiamento ou Parcela Fixa"):
+  with st.expander("➕ Registar Novo Financiamento ou Parcela Fixa"):
     with st.form("form_cad_parcelamento"):
       c_tit = st.text_input(
           "Título do Contrato", placeholder="Ex: Financiamento Veículo"
@@ -741,10 +740,10 @@ with tab_parcelas:
       )
       cp1, cp2 = st.columns(2)
       c_tot_p = cp1.number_input(
-          "Total de Parcelas", min_value=2, max_value=360, value=48, step=1
+          "Total de Prestações", min_value=2, max_value=360, value=48, step=1
       )
       c_pagas_p = cp2.number_input(
-          "Parcelas Já Pagas", min_value=0, max_value=360, value=0, step=1
+          "Prestações Já Amortizadas", min_value=0, max_value=360, value=0, step=1
       )
       cp3, cp4 = st.columns(2)
       c_val_p = cp3.number_input(
@@ -753,7 +752,7 @@ with tab_parcelas:
       c_dia = cp4.selectbox("Dia Fixo de Vencimento", [5, 20, 10, 15, 25, 30])
 
       btn_fin = st.form_submit_button(
-          "Salvar Financiamento", use_container_width=True
+          "Guardar Financiamento", use_container_width=True
       )
       if btn_fin:
         if c_tit.strip():
@@ -775,10 +774,10 @@ with tab_parcelas:
                 ),
             )
             conn.commit()
-          st.success("Financiamento cadastrado com sucesso!")
+          st.success("Financiamento guardado com sucesso!")
           st.rerun()
         else:
-          st.error("Informe o nome do financiamento.")
+          st.error("Indique o nome do financiamento.")
 
   if not df_parcelas.empty:
     for _, row in df_parcelas.iterrows():
@@ -793,13 +792,13 @@ with tab_parcelas:
       st.markdown(f"#### 📌 #{cid} - {row['titulo']} — *{row['tipo_contrato']}*")
       i1, i2, i3 = st.columns(3)
       i1.metric(
-          "Parcelas Pagas",
+          "Prestações Pagas",
           f"{pagas} / {tot}",
           delta=f"{restam} restantes",
           delta_color="inverse",
       )
       i2.metric("Valor da Parcela", f"R$ {val:,.2f}")
-      i3.metric("Saldo Devedor Restante", f"R$ {devedor:,.2f}")
+      i3.metric("Saldo Devedor Estimado", f"R$ {devedor:,.2f}")
 
       st.progress(prog)
 
@@ -842,19 +841,19 @@ with tab_parcelas:
                   ),
               )
               conn.commit()
-            st.success(f"Parcela #{pagas + 1} paga e lançada nas despesas!")
+            st.success(f"Parcela #{pagas + 1} paga e registada no extrato!")
             st.rerun()
         else:
-          st.success("🎉 Financiamento 100% quitado!")
+          st.success("🎉 Financiamento totalmente liquidado!")
       st.divider()
   else:
-    st.info("Nenhum financiamento cadastrado.")
+    st.info("Nenhum financiamento registado.")
 
-# 5. GERENCIAR, EDITAR E EXCLUIR REGISTROS
+# 5. GERENCIAR, EDITAR E EXCLUIR
 with tab_gestao:
-  st.subheader("⚙️ Painel de Edição e Exclusão")
+  st.subheader("⚙️ Painel de Edição e Eliminação")
   sec_trans, sec_parc = st.tabs(
-      ["📝 Editar / Apagar Lançamento", "🚗 Editar / Apagar Financiamento"]
+      ["📝 Editar / Apagar Registo", "🚗 Editar / Apagar Financiamento"]
   )
 
   # SEÇÃO 1: Editar / Apagar Transações
@@ -867,7 +866,9 @@ with tab_gestao:
           for _, r in df_trans.iterrows()
       }
       sel_label = st.selectbox(
-          "Escolha o lançamento:", list(opcoes_trans.keys()), key="sel_trans_ed"
+          "Selecione o registo:",
+          list(opcoes_trans.keys()),
+          key="sel_trans_ed",
       )
       id_edit = opcoes_trans[sel_label]
       registro = df_trans[df_trans["id"] == id_edit].iloc[0]
@@ -944,7 +945,7 @@ with tab_gestao:
           )
 
           btn_atualizar = st.form_submit_button(
-              "Salvar Alterações", type="primary", use_container_width=True
+              "Guardar Alterações", type="primary", use_container_width=True
           )
           if btn_atualizar:
             with get_db() as conn:
@@ -968,17 +969,17 @@ with tab_gestao:
                   ),
               )
               conn.commit()
-            st.success("Lançamento atualizado com sucesso!")
+            st.success("Registo atualizado com sucesso!")
             st.rerun()
 
       with col_ed2:
-        st.write("##### Excluir Definitivamente")
+        st.write("##### Eliminar Definitivamente")
         st.warning(
-            f"Você está prestes a excluir o lançamento **#{id_edit} -"
+            f"Está prestes a eliminar o registo **#{id_edit} -"
             f" {registro['descricao']}**."
         )
         if st.button(
-            f"🗑️ Excluir Lançamento #{id_edit}",
+            f"🗑️ Eliminar Registo #{id_edit}",
             type="secondary",
             use_container_width=True,
         ):
@@ -989,10 +990,10 @@ with tab_gestao:
                 (id_edit, USER_ID),
             )
             conn.commit()
-          st.success("Registro excluído com sucesso!")
+          st.success("Registo eliminado com sucesso!")
           st.rerun()
     else:
-      st.info("Nenhuma transação encontrada para editar.")
+      st.info("Nenhuma transação disponível para edição.")
 
   # SEÇÃO 2: Editar / Apagar Financiamentos
   with sec_parc:
@@ -1002,7 +1003,7 @@ with tab_gestao:
           for _, p in df_parcelas.iterrows()
       }
       sel_p_label = st.selectbox(
-          "Escolha o Financiamento:",
+          "Selecione o Financiamento:",
           list(opcoes_parc.keys()),
           key="sel_parc_ed",
       )
@@ -1017,13 +1018,13 @@ with tab_gestao:
         with st.form("form_edita_financiamento"):
           pe_tit = st.text_input("Título", value=parc_reg["titulo"])
           pe_tot = st.number_input(
-              "Total de Parcelas",
+              "Total de Prestações",
               value=int(parc_reg["total_parcelas"]),
               min_value=1,
               step=1,
           )
           pe_pagas = st.number_input(
-              "Parcelas Pagas",
+              "Prestações Pagas",
               value=int(parc_reg["parcelas_pagas"]),
               min_value=0,
               max_value=int(pe_tot),
@@ -1074,13 +1075,13 @@ with tab_gestao:
             st.rerun()
 
       with col_pe2:
-        st.write("##### Excluir Financiamento")
+        st.write("##### Eliminar Financiamento")
         st.warning(
-            f"Excluir o contrato **{parc_reg['titulo']}** removerá o"
-            " acompanhamento."
+            f"Eliminar o contrato **{parc_reg['titulo']}** remove o"
+            " acompanhamento, mantendo os lançamentos no histórico."
         )
         if st.button(
-            f"🗑️ Excluir Financiamento #{id_parc_edit}",
+            f"🗑️ Eliminar Financiamento #{id_parc_edit}",
             type="secondary",
             use_container_width=True,
         ):
@@ -1091,7 +1092,7 @@ with tab_gestao:
                 (id_parc_edit, USER_ID),
             )
             conn.commit()
-          st.success("Contrato excluído com sucesso!")
+          st.success("Contrato eliminado com sucesso!")
           st.rerun()
     else:
-      st.info("Nenhum financiamento cadastrado para gerenciar.")
+      st.info("Nenhum financiamento registado para gerir.")
