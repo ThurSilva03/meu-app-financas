@@ -23,7 +23,7 @@ def get_db():
 def init_db():
   with get_db() as conn:
     c = conn.cursor()
-    # 1. Tabela de Utilizadores
+    # 1. Usuários
     c.execute("""
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,7 +33,7 @@ def init_db():
             )
         """)
 
-    # 2. Tabela de Transações
+    # 2. Transações
     c.execute("""
             CREATE TABLE IF NOT EXISTS transacoes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +66,7 @@ def init_db():
       except sqlite3.OperationalError:
         pass
 
-    # 3. Tabela de Financiamentos & Contratos Fixos
+    # 3. Financiamentos e Contratos Fixos
     c.execute("""
             CREATE TABLE IF NOT EXISTS parcelamentos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,7 +224,6 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
       "Vencimento / Ciclo", ["Dia 05", "Dia 20", "Outro Momento"]
   )
 
-  # Configuração de Parcelas para compras no Crédito
   num_parcelas = 1
   fatura_inicio = date.today().strftime("%Y-%m")
   if tipo_mov == "Despesa" and metodo_mov == "Cartão de Crédito":
@@ -246,7 +245,6 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
       with get_db() as conn:
         c = conn.cursor()
         if tipo_mov == "Despesa" and metodo_mov == "Cartão de Crédito":
-          # Calcula o valor por parcela e projeta os meses
           val_parcela = valor_mov / num_parcelas
           try:
             dt_base = datetime.strptime(fatura_inicio.strip(), "%Y-%m")
@@ -301,11 +299,12 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
       st.sidebar.error("Informe a descrição.")
 
 # --- Abas Principais ---
-tab_dash, tab_ciclos, tab_cartao, tab_parcelas = st.tabs([
+tab_dash, tab_ciclos, tab_cartao, tab_parcelas, tab_gestao = st.tabs([
     "📊 Visão Geral",
     "🗓️ Ciclos Dia 5 / Dia 20",
     "💳 Faturas do Cartão",
     "🚗 Financiamentos & Contratos",
+    "⚙️ Editar / Excluir",
 ])
 
 # Carregar dados do usuário
@@ -368,7 +367,15 @@ with tab_dash:
     with cg2:
       st.write("##### Últimos Lançamentos")
       st.dataframe(
-          df_view[["data", "descricao", "categoria", "metodo", "valor"]],
+          df_view[[
+              "id",
+              "data",
+              "descricao",
+              "tipo",
+              "categoria",
+              "metodo",
+              "valor",
+          ]],
           use_container_width=True,
           hide_index=True,
       )
@@ -378,10 +385,6 @@ with tab_dash:
 # 2. SEPARAÇÃO DIA 5 E DIA 20
 with tab_ciclos:
   st.subheader("Separação de Gastos por Ciclo de Vencimento")
-  st.caption(
-      "Organize os valores a serem pagos especificamente no Dia 5 ou Dia 20."
-  )
-
   if not df_trans.empty:
     df_d = df_trans[df_trans["tipo"] == "Despesa"].copy()
     col5, col20 = st.columns(2)
@@ -395,7 +398,7 @@ with tab_ciclos:
       st.metric("Total no Dia 5", f"R$ {df_5['valor'].sum():,.2f}")
       if not df_5.empty:
         st.dataframe(
-            df_5[["data", "descricao", "categoria", "valor"]],
+            df_5[["id", "data", "descricao", "categoria", "valor"]],
             use_container_width=True,
             hide_index=True,
         )
@@ -411,7 +414,7 @@ with tab_ciclos:
       st.metric("Total no Dia 20", f"R$ {df_20['valor'].sum():,.2f}")
       if not df_20.empty:
         st.dataframe(
-            df_20[["data", "descricao", "categoria", "valor"]],
+            df_20[["id", "data", "descricao", "categoria", "valor"]],
             use_container_width=True,
             hide_index=True,
         )
@@ -423,10 +426,6 @@ with tab_ciclos:
 # 3. FATURAS DE CARTÃO DE CRÉDITO
 with tab_cartao:
   st.subheader("Controle Detalhado de Faturas do Cartão")
-  st.caption(
-      "Veja o valor acumulado em cada fatura e as compras parceladas futuras."
-  )
-
   df_card = df_trans[df_trans["metodo"] == "Cartão de Crédito"].copy()
   if not df_card.empty:
     faturas = sorted(df_card["mes_fatura"].dropna().unique(), reverse=True)
@@ -441,6 +440,7 @@ with tab_cartao:
     st.write("##### Itens e Parcelas Desta Fatura:")
     st.dataframe(
         df_fat_view[[
+            "id",
             "data",
             "descricao",
             "categoria",
@@ -452,17 +452,11 @@ with tab_cartao:
         hide_index=True,
     )
   else:
-    st.info(
-        "Nenhuma compra no Cartão de Crédito lançada ainda. Lance uma despesa"
-        " com pagamento 'Cartão de Crédito' para projetar suas faturas."
-    )
+    st.info("Nenhuma compra no Cartão de Crédito lançada ainda.")
 
 # 4. FINANCIAMENTOS E CONTRATOS FIXOS
 with tab_parcelas:
   st.subheader("Financiamentos e Despesas Parceladas Fixas")
-  st.caption(
-      "Controle financiamentos de veículos, empréstimos e parcelamentos longos."
-  )
 
   with st.expander("➕ Cadastrar Novo Financiamento ou Parcela Fixa"):
     with st.form("form_cad_parcelamento"):
@@ -523,7 +517,7 @@ with tab_parcelas:
       prog = min(pagas / tot, 1.0)
       devedor = restam * val
 
-      st.markdown(f"#### 📌 {row['titulo']} — *{row['tipo_contrato']}*")
+      st.markdown(f"#### 📌 #{cid} - {row['titulo']} — *{row['tipo_contrato']}*")
       i1, i2, i3 = st.columns(3)
       i1.metric(
           "Parcelas Pagas",
@@ -552,13 +546,11 @@ with tab_parcelas:
           ):
             with get_db() as conn:
               c = conn.cursor()
-              # Atualiza parcelamento
               c.execute(
                   "UPDATE parcelamentos SET parcelas_pagas = parcelas_pagas + 1"
                   " WHERE id = ?",
                   (cid,),
               )
-              # Cria a despesa correspondente
               desc_auto = f"Parcela {pagas + 1}/{tot} - {row['titulo']}"
               c.execute(
                   """
@@ -583,6 +575,258 @@ with tab_parcelas:
           st.success("🎉 Financiamento 100% quitado!")
       st.divider()
   else:
-    st.info(
-        "Nenhum financiamento cadastrado. Abra o painel acima para adicionar."
-    )
+    st.info("Nenhum financiamento cadastrado.")
+
+# 5. GERENCIAR, EDITAR E EXCLUIR REGISTROS
+with tab_gestao:
+  st.subheader("⚙️ Painel de Edição e Exclusão")
+  st.caption(
+      "Selecione um lançamento ou contrato para corrigir dados incorretos ou"
+      " apagar permanentemente."
+  )
+
+  sec_trans, sec_parc = st.tabs(
+      ["📝 Editar / Apagar Lançamento", "🚗 Editar / Apagar Financiamento"]
+  )
+
+  # SEÇÃO 1: Editar / Apagar Transações
+  with sec_trans:
+    if not df_trans.empty:
+      opcoes_trans = {
+          f"#{r['id']} | {r['data']} | {r['descricao']} | R$ {r['valor']:.2f}": (
+              int(r["id"])
+          )
+          for _, r in df_trans.iterrows()
+      }
+      sel_label = st.selectbox(
+          "Escolha o lançamento:", list(opcoes_trans.keys()), key="sel_trans_ed"
+      )
+      id_edit = opcoes_trans[sel_label]
+
+      registro = df_trans[df_trans["id"] == id_edit].iloc[0]
+
+      st.markdown("---")
+      col_ed1, col_ed2 = st.columns(2)
+
+      with col_ed1:
+        st.write("##### Corrigir Informações")
+        with st.form("form_edita_transacao"):
+          ed_desc = st.text_input("Descrição", value=registro["descricao"])
+          try:
+            dt_val = datetime.strptime(str(registro["data"]), "%Y-%m-%d").date()
+          except Exception:
+            dt_val = date.today()
+          ed_data = st.date_input("Data", value=dt_val)
+
+          lista_tipos = ["Despesa", "Receita"]
+          idx_tipo = (
+              lista_tipos.index(registro["tipo"])
+              if registro["tipo"] in lista_tipos
+              else 0
+          )
+          ed_tipo = st.selectbox("Tipo", lista_tipos, index=idx_tipo)
+
+          lista_cats = [
+              "Alimentação",
+              "Moradia & Contas",
+              "Transporte & Veículo",
+              "Lazer & Compras",
+              "Saúde",
+              "Financiamento/Dívida",
+              "Salário Principal",
+              "Vale / Adiantamento",
+              "Outros",
+          ]
+          idx_cat = (
+              lista_cats.index(registro["categoria"])
+              if registro["categoria"] in lista_cats
+              else 0
+          )
+          ed_cat = st.selectbox("Categoria", lista_cats, index=idx_cat)
+
+          lista_met = [
+              "Pix",
+              "Cartão de Crédito",
+              "Cartão de Débito",
+              "Dinheiro",
+              "Boleto",
+          ]
+          idx_met = (
+              lista_met.index(registro["metodo"])
+              if registro["metodo"] in lista_met
+              else 0
+          )
+          ed_met = st.selectbox("Método", lista_met, index=idx_met)
+
+          lista_ciclo = ["Dia 05", "Dia 20", "Outro Momento"]
+          idx_ciclo = (
+              lista_ciclo.index(registro["ciclo"])
+              if registro["ciclo"] in lista_ciclo
+              else 2
+          )
+          ed_ciclo = st.selectbox(
+              "Vencimento / Ciclo", lista_ciclo, index=idx_ciclo
+          )
+
+          ed_valor = st.number_input(
+              "Valor (R$)",
+              value=float(registro["valor"]),
+              min_value=0.01,
+              format="%.2f",
+              step=5.0,
+          )
+
+          btn_atualizar = st.form_submit_button(
+              "Salvar Alterações", type="primary", use_container_width=True
+          )
+          if btn_atualizar:
+            with get_db() as conn:
+              c = conn.cursor()
+              c.execute(
+                  """
+                                UPDATE transacoes 
+                                SET descricao = ?, data = ?, tipo = ?, categoria = ?, metodo = ?, ciclo = ?, valor = ?
+                                WHERE id = ? AND usuario_id = ?
+                            """,
+                  (
+                      ed_desc.strip(),
+                      str(ed_data),
+                      ed_tipo,
+                      ed_cat,
+                      ed_met,
+                      ed_ciclo,
+                      ed_valor,
+                      id_edit,
+                      USER_ID,
+                  ),
+              )
+              conn.commit()
+            st.success("Lançamento atualizado com sucesso!")
+            st.rerun()
+
+      with col_ed2:
+        st.write("##### Excluir Definitivamente")
+        st.warning(
+            f"Você está prestes a excluir o lançamento **#{id_edit} -"
+            f" {registro['descricao']}**."
+        )
+        if st.button(
+            f"🗑️ Excluir Lançamento #{id_edit}",
+            type="secondary",
+            use_container_width=True,
+        ):
+          with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                "DELETE FROM transacoes WHERE id = ? AND usuario_id = ?",
+                (id_edit, USER_ID),
+            )
+            conn.commit()
+          st.success("Registro excluído com sucesso!")
+          st.rerun()
+    else:
+      st.info("Nenhuma transação encontrada para editar.")
+
+  # SEÇÃO 2: Editar / Apagar Financiamentos
+  with sec_parc:
+    if not df_parcelas.empty:
+      opcoes_parc = {
+          f"#{p['id']} | {p['titulo']} ({p['tipo_contrato']})": int(p["id"])
+          for _, p in df_parcelas.iterrows()
+      }
+      sel_p_label = st.selectbox(
+          "Escolha o Financiamento:",
+          list(opcoes_parc.keys()),
+          key="sel_parc_ed",
+      )
+      id_parc_edit = opcoes_parc[sel_p_label]
+
+      parc_reg = df_parcelas[df_parcelas["id"] == id_parc_edit].iloc[0]
+
+      st.markdown("---")
+      col_pe1, col_pe2 = st.columns(2)
+
+      with col_pe1:
+        st.write("##### Corrigir Contrato")
+        with st.form("form_edita_financiamento"):
+          pe_tit = st.text_input("Título", value=parc_reg["titulo"])
+          pe_tot = st.number_input(
+              "Total de Parcelas",
+              value=int(parc_reg["total_parcelas"]),
+              min_value=1,
+              step=1,
+          )
+          pe_pagas = st.number_input(
+              "Parcelas Pagas",
+              value=int(parc_reg["parcelas_pagas"]),
+              min_value=0,
+              max_value=int(pe_tot),
+              step=1,
+          )
+          pe_val = st.number_input(
+              "Valor da Parcela (R$)",
+              value=float(parc_reg["valor_parcela"]),
+              min_value=0.01,
+              format="%.2f",
+              step=10.0,
+          )
+
+          dias_opc = [5, 20, 10, 15, 25, 30]
+          idx_dia = (
+              dias_opc.index(parc_reg["dia_vencimento"])
+              if parc_reg["dia_vencimento"] in dias_opc
+              else 0
+          )
+          pe_dia = st.selectbox(
+              "Dia de Vencimento", dias_opc, index=idx_dia, key="ed_dia_v"
+          )
+
+          btn_atualiza_parc = st.form_submit_button(
+              "Atualizar Contrato", type="primary", use_container_width=True
+          )
+          if btn_atualiza_parc:
+            with get_db() as conn:
+              c = conn.cursor()
+              c.execute(
+                  """
+                                UPDATE parcelamentos 
+                                SET titulo = ?, total_parcelas = ?, parcelas_pagas = ?, valor_parcela = ?, dia_vencimento = ?
+                                WHERE id = ? AND usuario_id = ?
+                            """,
+                  (
+                      pe_tit.strip(),
+                      int(pe_tot),
+                      int(pe_pagas),
+                      float(pe_val),
+                      int(pe_dia),
+                      id_parc_edit,
+                      USER_ID,
+                  ),
+              )
+              conn.commit()
+            st.success("Financiamento atualizado com sucesso!")
+            st.rerun()
+
+      with col_pe2:
+        st.write("##### Excluir Financiamento")
+        st.warning(
+            f"Excluir o contrato **{parc_reg['titulo']}** não apagará as"
+            " parcelas já pagas do seu histórico financeiro, apenas removerá o"
+            " acompanhamento."
+        )
+        if st.button(
+            f"🗑️ Excluir Financiamento #{id_parc_edit}",
+            type="secondary",
+            use_container_width=True,
+        ):
+          with get_db() as conn:
+            c = conn.cursor()
+            c.execute(
+                "DELETE FROM parcelamentos WHERE id = ? AND usuario_id = ?",
+                (id_parc_edit, USER_ID),
+            )
+            conn.commit()
+          st.success("Contrato excluído com sucesso!")
+          st.rerun()
+    else:
+      st.info("Nenhum financiamento cadastrado para gerenciar.")
