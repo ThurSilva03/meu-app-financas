@@ -565,12 +565,25 @@ if not df_trans.empty:
 else:
   df_trans["mes_ano"] = []
 
+# Mapeia todos os meses existentes
 meses_set = set([date.today().strftime("%Y-%m")])
 if not df_trans.empty:
   for m in df_trans["mes_ano"].dropna():
     meses_set.add(m)
   for m in df_trans["mes_fatura"].dropna():
     meses_set.add(m)
+
+# Inclui os meses futuros dos financiamentos ativos da tabela parcelamentos
+if not df_parcelas.empty:
+  for _, p_row in df_parcelas.iterrows():
+    if "data_inicio" in p_row and p_row["data_inicio"]:
+      try:
+        dt_ini = datetime.strptime(str(p_row["data_inicio"]), "%Y-%m-%d").date()
+        for k in range(int(p_row["total_parcelas"])):
+          m_futuro = (dt_ini + relativedelta(months=k)).strftime("%Y-%m")
+          meses_set.add(m_futuro)
+      except Exception:
+        pass
 
 meses_ordenados = sorted(list(meses_set), reverse=True)
 mes_atual = date.today().strftime("%Y-%m")
@@ -587,7 +600,7 @@ tab_dash, tab_ciclos, tab_cartao, tab_parcelas, tab_gestao = st.tabs([
     "⚙️ Editar / Excluir",
 ])
 
-# 1. VISÃO GERAL DO MÊS
+# 1. VISÃO GERAL DO MÊS (AJUSTE ROBUSTO DA PARCELA DO FINANCIAMENTO)
 with tab_dash:
   st.subheader("📊 Gastos e Compromissos do Mês")
 
@@ -611,26 +624,59 @@ with tab_dash:
   )
 
   # B) Parcela de Financiamento que vence NO MÊS
+  # 1. Busca por transações registradas no mês que sejam de Financiamento/Dívida ou tenham financiamento na descrição
   df_fin_mes = pd.DataFrame()
   if not df_trans.empty:
-    df_fin_mes = df_trans[
+    filtro_fin = (
         (df_trans["mes_ano"] == mes_selecionado)
-        & (df_trans["categoria"] == "Financiamento/Dívida")
         & (df_trans["tipo"] == "Despesa")
-    ].copy()
+        & (
+            df_trans["categoria"].str.contains("Financiamento", case=False, na=False)
+            | df_trans["descricao"].str.contains("Financiamento", case=False, na=False)
+        )
+    )
+    df_fin_mes = df_trans[filtro_fin].copy()
+
   total_financiamentos_mes = (
       df_fin_mes["valor"].sum() if not df_fin_mes.empty else 0.0
   )
 
+  # 2. Se não houver transações individuais lançadas para este mês, calcula a partir dos contratos cadastrados em parcelamentos
+  if total_financiamentos_mes == 0.0 and not df_parcelas.empty:
+    for _, parc_item in df_parcelas.iterrows():
+      tot_p = int(parc_item["total_parcelas"])
+      pagas_p = int(parc_item["parcelas_pagas"])
+      if pagas_p < tot_p:
+        # Verifica se o mês selecionado está no período de cobrança deste contrato
+        if "data_inicio" in parc_item and parc_item["data_inicio"]:
+          try:
+            d_ini = datetime.strptime(str(parc_item["data_inicio"]), "%Y-%m-%d").date()
+            meses_contrato = [
+                (d_ini + relativedelta(months=idx)).strftime("%Y-%m")
+                for idx in range(pagas_p, tot_p)
+            ]
+            if mes_selecionado in meses_contrato:
+              total_financiamentos_mes += float(parc_item["valor_parcela"])
+          except Exception:
+            total_financiamentos_mes += float(parc_item["valor_parcela"])
+        else:
+          total_financiamentos_mes += float(parc_item["valor_parcela"])
+
   # C) Outras Contas / Boletos do Mês
   df_outros_mes = pd.DataFrame()
   if not df_trans.empty:
-    df_outros_mes = df_trans[
+    filtro_outros = (
         (df_trans["mes_ano"] == mes_selecionado)
         & (df_trans["tipo"] == "Despesa")
         & (df_trans["metodo"] != "Cartão de Crédito")
-        & (df_trans["categoria"] != "Financiamento/Dívida")
-    ].copy()
+        & (
+            ~df_trans["categoria"].str.contains("Financiamento", case=False, na=False)
+        )
+        & (
+            ~df_trans["descricao"].str.contains("Financiamento", case=False, na=False)
+        )
+    )
+    df_outros_mes = df_trans[filtro_outros].copy()
   total_outros_mes = (
       df_outros_mes["valor"].sum() if not df_outros_mes.empty else 0.0
   )
@@ -687,6 +733,11 @@ with tab_dash:
       ]].copy()
       df_compr_show["valor"] = df_compr_show["valor"].map("R$ {:,.2f}".format)
       st.dataframe(df_compr_show, use_container_width=True, hide_index=True)
+    elif total_financiamentos_mes > 0:
+      st.info(
+          f"Existe parcela de financiamento ativa de R$"
+          f" {total_financiamentos_mes:,.2f} prevista para este mês."
+      )
     else:
       st.info("Nenhum boleto ou parcela de financiamento para este mês.")
 
@@ -847,21 +898,21 @@ with tab_parcelas:
               fat_s = dt_p.strftime("%Y-%m")
               desc_p = f"{nome_valido} ({i + 1}/{int(c_tot_p)})"
               c.execute(
-                """
+                  """
                                 INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
                                 VALUES (?, ?, ?, 'Despesa', 'Financiamento/Dívida', 'Boleto', ?, ?, ?, ?, ?)
                             """,
-                (
-                    USER_ID,
-                    str(dt_p),
-                    desc_p,
-                    ciclo_calc,
-                    float(c_val_p),
-                    fat_s,
-                    i + 1,
-                    int(c_tot_p),
-                ),
-            )
+                  (
+                      USER_ID,
+                      str(dt_p),
+                      desc_p,
+                      ciclo_calc,
+                      float(c_val_p),
+                      fat_s,
+                      i + 1,
+                      int(c_tot_p),
+                  ),
+              )
             conn.commit()
           st.success(
               "Financiamento guardado e parcelas integradas à agenda mensal!"
@@ -956,7 +1007,6 @@ with tab_gestao:
     if not df_trans.empty:
       df_com_parcelas = df_trans.copy()
 
-      # Função auxiliar para extrair o nome base sem o número da parcela (ex: "Compra Iphone (1/12)" -> "Compra Iphone")
       def obter_nome_base(desc):
         return re.sub(r"\s*\(\d+/\d+\)\s*$", "", str(desc)).strip()
 
@@ -964,7 +1014,6 @@ with tab_gestao:
           obter_nome_base
       )
 
-      # Filtra itens que possuem mais de 1 parcela ou mais de um registro sob o mesmo nome base
       contagem = (
           df_com_parcelas.groupby(["nome_base", "metodo"])
           .size()
@@ -1072,7 +1121,7 @@ with tab_gestao:
                   novo_desc_item = f"{novo_nome_base.strip()} ({p_atual}/{p_total})"
                   c.execute(
                       """
-                                        UPDATE transacoes
+                                        UPDATE transacoes 
                                         SET descricao = ?, categoria = ?, ciclo = ?, valor = ?
                                         WHERE id = ? AND usuario_id = ?
                                     """,
@@ -1124,7 +1173,6 @@ with tab_gestao:
   # --- 2. LANÇAMENTOS INDIVIDUAIS / AVULSOS ---
   with sec_avulsas:
     if not df_trans.empty:
-      # Lançamentos que possuem apenas 1 parcela (gastos normais do dia a dia)
       df_avulsas = df_trans[df_trans["total_parcelas"] <= 1].copy()
       if not df_avulsas.empty:
         opcoes_avulsas = {
@@ -1262,10 +1310,7 @@ with tab_gestao:
             st.success("Registro eliminado com sucesso!")
             st.rerun()
       else:
-        st.info(
-            "Nenhum lançamento avulso encontrado (todos os lançamentos atuais"
-            " fazem parte de pacotes parcelados)."
-        )
+        st.info("Nenhum lançamento avulso encontrado.")
     else:
       st.info("Nenhuma transação disponível para edição.")
 
