@@ -1,4 +1,5 @@
 import hashlib
+import re
 import sqlite3
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
@@ -558,7 +559,6 @@ with get_db() as conn:
       params=(USER_ID,),
   )
 
-# Processa coluna de mês da transação
 if not df_trans.empty:
   df_trans["data_dt"] = pd.to_datetime(df_trans["data"])
   df_trans["mes_ano"] = df_trans["data_dt"].dt.strftime("%Y-%m")
@@ -820,7 +820,6 @@ with tab_parcelas:
         if nome_valido:
           with get_db() as conn:
             c = conn.cursor()
-            # 1. Salva o contrato principal
             c.execute(
                 """
                             INSERT INTO parcelamentos (usuario_id, titulo, tipo_contrato, total_parcelas, parcelas_pagas, valor_parcela, dia_vencimento, data_inicio)
@@ -838,7 +837,6 @@ with tab_parcelas:
                 ),
             )
 
-            # 2. Gera automaticamente as parcelas pendentes na agenda mensal
             ciclo_calc = (
                 f"Dia {int(c_dia):02d}"
                 if int(c_dia) in [5, 20]
@@ -849,21 +847,21 @@ with tab_parcelas:
               fat_s = dt_p.strftime("%Y-%m")
               desc_p = f"{nome_valido} ({i + 1}/{int(c_tot_p)})"
               c.execute(
-                  """
+                """
                                 INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
                                 VALUES (?, ?, ?, 'Despesa', 'Financiamento/Dívida', 'Boleto', ?, ?, ?, ?, ?)
                             """,
-                  (
-                      USER_ID,
-                      str(dt_p),
-                      desc_p,
-                      ciclo_calc,
-                      float(c_val_p),
-                      fat_s,
-                      i + 1,
-                      int(c_tot_p),
-                  ),
-              )
+                (
+                    USER_ID,
+                    str(dt_p),
+                    desc_p,
+                    ciclo_calc,
+                    float(c_val_p),
+                    fat_s,
+                    i + 1,
+                    int(c_tot_p),
+                ),
+            )
             conn.commit()
           st.success(
               "Financiamento guardado e parcelas integradas à agenda mensal!"
@@ -939,154 +937,340 @@ with tab_parcelas:
         " cadastrar o acompanhamento de longo prazo."
     )
 
-# 5. GERENCIAR, EDITAR E EXCLUIR
+# 5. GERENCIAR, EDITAR E EXCLUIR (AGRUPADO INTELIGENTEMENTE)
 with tab_gestao:
-  st.subheader("⚙️ Painel de Edição e Eliminação")
-  sec_trans, sec_parc = st.tabs(
-      ["📝 Editar / Apagar Registo", "🚗 Editar / Apagar Financiamento"]
+  st.subheader("⚙️ Painel de Edição e Eliminação Agrupado")
+  st.caption(
+      "Edite compras parceladas ou financiamentos em bloco, ou ajuste"
+      " lançamentos individuais."
   )
 
-  # SEÇÃO 1: Editar / Apagar Transações
-  with sec_trans:
+  sec_pacotes, sec_avulsas, sec_contratos = st.tabs([
+      "📦 Compras e Financiamentos Parcelados",
+      "📝 Lançamentos Individuais / Avulsos",
+      "🚗 Contratos de Financiamento",
+  ])
+
+  # --- 1. PACOTES PARCELADOS (AGRUPADOS) ---
+  with sec_pacotes:
     if not df_trans.empty:
-      opcoes_trans = {
-          f"#{r['id']} | {r['data']} | {r['descricao']} | R$ {r['valor']:.2f}": (
-              int(r["id"])
-          )
-          for _, r in df_trans.iterrows()
-      }
-      sel_label = st.selectbox(
-          "Selecione o registo:",
-          list(opcoes_trans.keys()),
-          key="sel_trans_ed",
+      df_com_parcelas = df_trans.copy()
+
+      # Função auxiliar para extrair o nome base sem o número da parcela (ex: "Compra Iphone (1/12)" -> "Compra Iphone")
+      def obter_nome_base(desc):
+        return re.sub(r"\s*\(\d+/\d+\)\s*$", "", str(desc)).strip()
+
+      df_com_parcelas["nome_base"] = df_com_parcelas["descricao"].apply(
+          obter_nome_base
       )
-      id_edit = opcoes_trans[sel_label]
-      registro = df_trans[df_trans["id"] == id_edit].iloc[0]
 
-      st.markdown("---")
-      col_ed1, col_ed2 = st.columns(2)
+      # Filtra itens que possuem mais de 1 parcela ou mais de um registro sob o mesmo nome base
+      contagem = (
+          df_com_parcelas.groupby(["nome_base", "metodo"])
+          .size()
+          .reset_index(name="qtd")
+      )
+      pacotes_identificados = contagem[contagem["qtd"] > 1]
 
-      with col_ed1:
-        st.write("##### Corrigir Informações")
-        with st.form("form_edita_transacao"):
-          ed_desc = st.text_input("Descrição", value=registro["descricao"])
-          try:
-            dt_val = datetime.strptime(str(registro["data"]), "%Y-%m-%d").date()
-          except Exception:
-            dt_val = date.today()
-          ed_data = st.date_input("Data", value=dt_val)
+      if not pacotes_identificados.empty:
+        opcoes_pacotes = {}
+        for _, p_row in pacotes_identificados.iterrows():
+          n_base = p_row["nome_base"]
+          m_base = p_row["metodo"]
+          qtd_p = p_row["qtd"]
+          val_total = df_com_parcelas[
+              (df_com_parcelas["nome_base"] == n_base)
+              & (df_com_parcelas["metodo"] == m_base)
+          ]["valor"].sum()
+          label = f"{n_base} ({qtd_p} parcelas) | {m_base} | Total: R$ {val_total:,.2f}"
+          opcoes_pacotes[label] = (n_base, m_base)
 
-          lista_tipos = ["Despesa", "Receita"]
-          idx_tipo = (
-              lista_tipos.index(registro["tipo"])
-              if registro["tipo"] in lista_tipos
-              else 0
+        pacote_selecionado = st.selectbox(
+            "Selecione o Pacote / Financiamento Agrupado:",
+            list(opcoes_pacotes.keys()),
+            key="sel_pacote_group",
+        )
+        base_nome, base_metodo = opcoes_pacotes[pacote_selecionado]
+
+        df_grupo = df_com_parcelas[
+            (df_com_parcelas["nome_base"] == base_nome)
+            & (df_com_parcelas["metodo"] == base_metodo)
+        ].copy()
+
+        st.markdown("---")
+        st.write(f"##### 📋 Todas as Parcelas de: **{base_nome}**")
+        df_exibir_grupo = df_grupo[[
+            "id",
+            "data",
+            "descricao",
+            "categoria",
+            "metodo",
+            "ciclo",
+            "valor",
+        ]].copy()
+        df_exibir_grupo["valor"] = df_exibir_grupo["valor"].map(
+            "R$ {:,.2f}".format
+        )
+        st.dataframe(df_exibir_grupo, use_container_width=True, hide_index=True)
+
+        col_g_edit, col_g_del = st.columns(2)
+
+        with col_g_edit:
+          st.write("##### ✏️ Atualizar Todas as Parcelas Deste Pacote")
+          with st.form("form_edita_grupo"):
+            novo_nome_base = st.text_input("Novo Nome Base", value=base_nome)
+            primeira_linha = df_grupo.iloc[0]
+
+            lista_cats = [
+                "Financiamento/Dívida",
+                "Moradia & Contas",
+                "Transporte & Veículo",
+                "Alimentação",
+                "Lazer & Compras",
+                "Saúde",
+                "Outros",
+            ]
+            idx_cat_g = (
+                lista_cats.index(primeira_linha["categoria"])
+                if primeira_linha["categoria"] in lista_cats
+                else 0
+            )
+            nova_cat_g = st.selectbox(
+                "Categoria de Todas", lista_cats, index=idx_cat_g
+            )
+
+            lista_ciclo_g = ["Dia 05", "Dia 20", "Outro Momento"]
+            idx_ciclo_g = (
+                lista_ciclo_g.index(primeira_linha["ciclo"])
+                if primeira_linha["ciclo"] in lista_ciclo_g
+                else 2
+            )
+            novo_ciclo_g = st.selectbox(
+                "Ciclo de Vencimento", lista_ciclo_g, index=idx_ciclo_g
+            )
+
+            novo_val_parc = st.number_input(
+                "Novo Valor de Cada Parcela (R$)",
+                value=float(primeira_linha["valor"]),
+                min_value=0.01,
+                format="%.2f",
+                step=10.0,
+            )
+
+            btn_atualizar_grupo = st.form_submit_button(
+                "Atualizar Todas as Parcelas",
+                type="primary",
+                use_container_width=True,
+            )
+            if btn_atualizar_grupo:
+              ids_grupo = df_grupo["id"].tolist()
+              with get_db() as conn:
+                c = conn.cursor()
+                for _, r_item in df_grupo.iterrows():
+                  p_atual = r_item["parcela_atual"]
+                  p_total = r_item["total_parcelas"]
+                  novo_desc_item = f"{novo_nome_base.strip()} ({p_atual}/{p_total})"
+                  c.execute(
+                      """
+                                        UPDATE transacoes
+                                        SET descricao = ?, categoria = ?, ciclo = ?, valor = ?
+                                        WHERE id = ? AND usuario_id = ?
+                                    """,
+                      (
+                          novo_desc_item,
+                          nova_cat_g,
+                          novo_ciclo_g,
+                          novo_val_parc,
+                          r_item["id"],
+                          USER_ID,
+                      ),
+                  )
+                conn.commit()
+              st.success(
+                  f"Todas as {len(ids_grupo)} parcelas foram atualizadas com"
+                  " sucesso!"
+              )
+              st.rerun()
+
+        with col_g_del:
+          st.write("##### 🗑️ Excluir Pacote Inteiro")
+          st.error(
+              f"Esta ação irá remover permanentemente **todas as"
+              f" {len(df_grupo)} parcelas** de **{base_nome}** do seu"
+              " extrato."
           )
-          ed_tipo = st.selectbox("Tipo", lista_tipos, index=idx_tipo)
+          if st.button(
+              f"Excluir Todas as {len(df_grupo)} Parcelas de {base_nome}",
+              type="secondary",
+              use_container_width=True,
+          ):
+            ids_para_apagar = df_grupo["id"].tolist()
+            with get_db() as conn:
+              c = conn.cursor()
+              c.executemany(
+                  "DELETE FROM transacoes WHERE id = ? AND usuario_id = ?",
+                  [(i, USER_ID) for i in ids_para_apagar],
+              )
+              conn.commit()
+            st.success(
+                f"Todas as {len(ids_para_apagar)} parcelas foram eliminadas!"
+            )
+            st.rerun()
+      else:
+        st.info("Nenhuma compra parcelada ou financiamento em grupo ativo.")
+    else:
+      st.info("Sem lançamentos cadastrados.")
 
-          lista_cats = [
-              "Financiamento/Dívida",
-              "Moradia & Contas",
-              "Transporte & Veículo",
-              "Alimentação",
-              "Lazer & Compras",
-              "Saúde",
-              "Salário Principal",
-              "Vale / Adiantamento",
-              "Outros",
-          ]
-          idx_cat = (
-              lista_cats.index(registro["categoria"])
-              if registro["categoria"] in lista_cats
-              else 0
-          )
-          ed_cat = st.selectbox("Categoria", lista_cats, index=idx_cat)
+  # --- 2. LANÇAMENTOS INDIVIDUAIS / AVULSOS ---
+  with sec_avulsas:
+    if not df_trans.empty:
+      # Lançamentos que possuem apenas 1 parcela (gastos normais do dia a dia)
+      df_avulsas = df_trans[df_trans["total_parcelas"] <= 1].copy()
+      if not df_avulsas.empty:
+        opcoes_avulsas = {
+            f"#{r['id']} | {r['data']} | {r['descricao']} | R$ {r['valor']:.2f}": (
+                int(r["id"])
+            )
+            for _, r in df_avulsas.iterrows()
+        }
+        sel_avulsa_label = st.selectbox(
+            "Selecione o Lançamento Individual:",
+            list(opcoes_avulsas.keys()),
+            key="sel_trans_avulsa",
+        )
+        id_avulsa = opcoes_avulsas[sel_avulsa_label]
+        reg_avulso = df_avulsas[df_avulsas["id"] == id_avulsa].iloc[0]
 
-          lista_met = [
-              "Boleto",
-              "Cartão de Crédito",
-              "Pix",
-              "Cartão de Débito",
-              "Dinheiro",
-          ]
-          idx_met = (
-              lista_met.index(registro["metodo"])
-              if registro["metodo"] in lista_met
-              else 0
-          )
-          ed_met = st.selectbox("Método", lista_met, index=idx_met)
+        st.markdown("---")
+        col_av1, col_av2 = st.columns(2)
 
-          lista_ciclo = ["Dia 05", "Dia 20", "Outro Momento"]
-          idx_ciclo = (
-              lista_ciclo.index(registro["ciclo"])
-              if registro["ciclo"] in lista_ciclo
-              else 2
-          )
-          ed_ciclo = st.selectbox(
-              "Vencimento / Ciclo", lista_ciclo, index=idx_ciclo
-          )
+        with col_av1:
+          st.write("##### Corrigir Registro")
+          with st.form("form_edita_avulso"):
+            ed_desc = st.text_input("Descrição", value=reg_avulso["descricao"])
+            try:
+              dt_val = datetime.strptime(
+                  str(reg_avulso["data"]), "%Y-%m-%d"
+              ).date()
+            except Exception:
+              dt_val = date.today()
+            ed_data = st.date_input("Data", value=dt_val)
 
-          ed_valor = st.number_input(
-              "Valor (R$)",
-              value=float(registro["valor"]),
-              min_value=0.01,
-              format="%.2f",
-              step=5.0,
-          )
+            lista_tipos = ["Despesa", "Receita"]
+            idx_tipo = (
+                lista_tipos.index(reg_avulso["tipo"])
+                if reg_avulso["tipo"] in lista_tipos
+                else 0
+            )
+            ed_tipo = st.selectbox("Tipo", lista_tipos, index=idx_tipo)
 
-          btn_atualizar = st.form_submit_button(
-              "Guardar Alterações", type="primary", use_container_width=True
+            lista_cats = [
+                "Moradia & Contas",
+                "Transporte & Veículo",
+                "Alimentação",
+                "Lazer & Compras",
+                "Saúde",
+                "Salário Principal",
+                "Vale / Adiantamento",
+                "Outros",
+            ]
+            idx_cat = (
+                lista_cats.index(reg_avulso["categoria"])
+                if reg_avulso["categoria"] in lista_cats
+                else 0
+            )
+            ed_cat = st.selectbox("Categoria", lista_cats, index=idx_cat)
+
+            lista_met = [
+                "Boleto",
+                "Cartão de Crédito",
+                "Pix",
+                "Cartão de Débito",
+                "Dinheiro",
+            ]
+            idx_met = (
+                lista_met.index(reg_avulso["metodo"])
+                if reg_avulso["metodo"] in lista_met
+                else 0
+            )
+            ed_met = st.selectbox("Método", lista_met, index=idx_met)
+
+            lista_ciclo = ["Dia 05", "Dia 20", "Outro Momento"]
+            idx_ciclo = (
+                lista_ciclo.index(reg_avulso["ciclo"])
+                if reg_avulso["ciclo"] in lista_ciclo
+                else 2
+            )
+            ed_ciclo = st.selectbox(
+                "Vencimento / Ciclo", lista_ciclo, index=idx_ciclo
+            )
+
+            ed_valor = st.number_input(
+                "Valor (R$)",
+                value=float(reg_avulso["valor"]),
+                min_value=0.01,
+                format="%.2f",
+                step=5.0,
+            )
+
+            btn_atualizar = st.form_submit_button(
+                "Guardar Alterações", type="primary", use_container_width=True
+            )
+            if btn_atualizar:
+              with get_db() as conn:
+                c = conn.cursor()
+                c.execute(
+                    """
+                                    UPDATE transacoes 
+                                    SET descricao = ?, data = ?, tipo = ?, categoria = ?, metodo = ?, ciclo = ?, valor = ?
+                                    WHERE id = ? AND usuario_id = ?
+                                """,
+                    (
+                        ed_desc.strip(),
+                        str(ed_data),
+                        ed_tipo,
+                        ed_cat,
+                        ed_met,
+                        ed_ciclo,
+                        ed_valor,
+                        id_avulsa,
+                        USER_ID,
+                    ),
+                )
+                conn.commit()
+              st.success("Registo atualizado com sucesso!")
+              st.rerun()
+
+        with col_av2:
+          st.write("##### Eliminar Registro")
+          st.warning(
+              f"Excluir definitivamente o registro **#{id_avulsa} -"
+              f" {reg_avulso['descricao']}**."
           )
-          if btn_atualizar:
+          if st.button(
+              f"🗑️ Eliminar Registo #{id_avulsa}",
+              type="secondary",
+              use_container_width=True,
+          ):
             with get_db() as conn:
               c = conn.cursor()
               c.execute(
-                  """
-                                UPDATE transacoes 
-                                SET descricao = ?, data = ?, tipo = ?, categoria = ?, metodo = ?, ciclo = ?, valor = ?
-                                WHERE id = ? AND usuario_id = ?
-                            """,
-                  (
-                      ed_desc.strip(),
-                      str(ed_data),
-                      ed_tipo,
-                      ed_cat,
-                      ed_met,
-                      ed_ciclo,
-                      ed_valor,
-                      id_edit,
-                      USER_ID,
-                  ),
+                  "DELETE FROM transacoes WHERE id = ? AND usuario_id = ?",
+                  (id_avulsa, USER_ID),
               )
               conn.commit()
-            st.success("Registo atualizado com sucesso!")
+            st.success("Registro eliminado com sucesso!")
             st.rerun()
-
-      with col_ed2:
-        st.write("##### Eliminar Definitivamente")
-        st.warning(
-            f"Está prestes a eliminar o registo **#{id_edit} -"
-            f" {registro['descricao']}**."
+      else:
+        st.info(
+            "Nenhum lançamento avulso encontrado (todos os lançamentos atuais"
+            " fazem parte de pacotes parcelados)."
         )
-        if st.button(
-            f"🗑️ Eliminar Registo #{id_edit}",
-            type="secondary",
-            use_container_width=True,
-        ):
-          with get_db() as conn:
-            c = conn.cursor()
-            c.execute(
-                "DELETE FROM transacoes WHERE id = ? AND usuario_id = ?",
-                (id_edit, USER_ID),
-            )
-            conn.commit()
-          st.success("Registo eliminado com sucesso!")
-          st.rerun()
     else:
       st.info("Nenhuma transação disponível para edição.")
 
-  # SEÇÃO 2: Editar / Apagar Financiamentos
-  with sec_parc:
+  # --- 3. CONTRATOS DE FINANCIAMENTO ---
+  with sec_contratos:
     if not df_parcelas.empty:
       opcoes_parc = {
           f"#{p['id']} | {p['titulo']} ({p['tipo_contrato']})": int(p["id"])
@@ -1114,7 +1298,7 @@ with tab_gestao:
               step=1,
           )
           pe_pagas = st.number_input(
-              "Prestações Pagas",
+              "Prestações Já Amortizadas",
               value=int(parc_reg["parcelas_pagas"]),
               min_value=0,
               max_value=int(pe_tot),
@@ -1168,7 +1352,7 @@ with tab_gestao:
         st.write("##### Eliminar Financiamento")
         st.warning(
             f"Eliminar o contrato **{parc_reg['titulo']}** remove o"
-            " acompanhamento, mantendo os lançamentos no histórico."
+            " acompanhamento geral."
         )
         if st.button(
             f"🗑️ Eliminar Financiamento #{id_parc_edit}",
