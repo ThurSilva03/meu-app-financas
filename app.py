@@ -22,7 +22,7 @@ def init_db():
   conn = get_db_connection()
   c = conn.cursor()
 
-  # Utilizadores
+  # 1. Utilizadores
   c.execute("""
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,35 +32,46 @@ def init_db():
         )
     """)
 
-  # Transações Gerais (com ciclo de pagamento e vínculo a cartão)
+  # 2. Transações
   c.execute("""
         CREATE TABLE IF NOT EXISTS transacoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario_id INTEGER NOT NULL,
+            usuario_id INTEGER DEFAULT 1,
             data TEXT NOT NULL,
             descricao TEXT NOT NULL,
             tipo TEXT NOT NULL,
             categoria TEXT NOT NULL,
-            metodo TEXT NOT NULL,
+            metodo TEXT NOT NULL DEFAULT 'Pix',
             ciclo TEXT DEFAULT 'Outro',
             valor REAL NOT NULL,
-            mes_fatura TEXT,
-            FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
+            mes_fatura TEXT
         )
     """)
 
-  # Contratos / Financiamentos e Parcelamentos
+  # 3. Garante atualização de colunas se o banco já existia
+  colunas = [
+      ("usuario_id", "INTEGER DEFAULT 1"),
+      ("metodo", "TEXT NOT NULL DEFAULT 'Pix'"),
+      ("ciclo", "TEXT DEFAULT 'Outro'"),
+      ("mes_fatura", "TEXT"),
+  ]
+  for col, tipo_col in colunas:
+    try:
+      c.execute(f"ALTER TABLE transacoes ADD COLUMN {col} {tipo_col}")
+    except sqlite3.OperationalError:
+      pass
+
+  # 4. Financiamentos e Parcelamentos
   c.execute("""
         CREATE TABLE IF NOT EXISTS parcelamentos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             usuario_id INTEGER NOT NULL,
             titulo TEXT NOT NULL,
-            tipo_contrato TEXT NOT NULL, -- 'Financiamento Veículo' ou 'Parcelamento Geral'
+            tipo_contrato TEXT NOT NULL,
             total_parcelas INTEGER NOT NULL,
             parcelas_pagas INTEGER NOT NULL DEFAULT 0,
             valor_parcela REAL NOT NULL,
-            dia_vencimento INTEGER NOT NULL,
-            FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
+            dia_vencimento INTEGER NOT NULL
         )
     """)
 
@@ -96,22 +107,6 @@ st.markdown(
             border-left: 5px solid #6366f1;
             margin-bottom: 12px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        }
-        .badge-5 {
-            background-color: #0284c7;
-            color: white;
-            padding: 3px 10px;
-            border-radius: 6px;
-            font-size: 0.85em;
-            font-weight: bold;
-        }
-        .badge-20 {
-            background-color: #d97706;
-            color: white;
-            padding: 3px 10px;
-            border-radius: 6px;
-            font-size: 0.85em;
-            font-weight: bold;
         }
     </style>
 """,
@@ -189,7 +184,7 @@ def tela_autenticacao():
                 (c_user.strip(), c_nome.strip(), hash_password(c_pass)),
             )
             conn.commit()
-            st.success("Conta criada com sucesso! Mude para o separador Entrar.")
+            st.success("Conta criada com sucesso! Aceda ao separador Entrar.")
           except sqlite3.IntegrityError:
             st.error("Este nome de utilizador já existe. Escolha outro.")
           finally:
@@ -202,10 +197,9 @@ if not st.session_state["user_id"]:
   tela_autenticacao()
   st.stop()
 
-# --- Painel do Utilizador Autenticado ---
+# --- Painel Principal ---
 USER_ID = st.session_state["user_id"]
 
-# Barra Lateral
 st.sidebar.markdown(f"### Olá, **{st.session_state['user_nome']}** 👋")
 if st.sidebar.button("Terminar Sessão", type="secondary"):
   st.session_state["user_id"] = None
@@ -216,7 +210,7 @@ st.sidebar.divider()
 st.sidebar.header("➕ Lançamento Rápido")
 with st.sidebar.form("form_transacao", clear_on_submit=True):
   data_reg = st.date_input("Data do Pagamento", value=date.today())
-  desc = st.text_input("Descrição", placeholder="Ex: Combustível, Conta Luz")
+  desc = st.text_input("Descrição", placeholder="Ex: Combustível, Conta de Luz")
   tipo_t = st.selectbox("Tipo de Movimento", ["Despesa", "Receita"])
 
   if tipo_t == "Despesa":
@@ -243,8 +237,6 @@ with st.sidebar.form("form_transacao", clear_on_submit=True):
           "Débito Direto",
       ],
   )
-
-  # Alocação ao ciclo de vencimento
   ciclo_t = st.selectbox(
       "Ciclo de Pagamento / Vencimento",
       ["Dia 05", "Dia 20", "Outro Momento do Mês"],
@@ -283,10 +275,10 @@ with st.sidebar.form("form_transacao", clear_on_submit=True):
       )
       conn.commit()
       conn.close()
-      st.sidebar.success("Lançamento guardado!")
+      st.sidebar.success("Lançamento guardado com sucesso!")
       st.rerun()
 
-# --- Navegação Principal por Separadores ---
+# Separadores de Navegação
 tab_dash, tab_ciclos, tab_cartao, tab_parcelas = st.tabs([
     "📊 Visão Geral & Métricas",
     "🗓️ Organização Dia 5 / Dia 20",
@@ -294,7 +286,6 @@ tab_dash, tab_ciclos, tab_cartao, tab_parcelas = st.tabs([
     "🚗 Financiamentos & Parcelamentos",
 ])
 
-# Carregar dados do utilizador
 conn = get_db_connection()
 df_user = pd.read_sql_query(
     "SELECT * FROM transacoes WHERE usuario_id = ? ORDER BY data DESC",
@@ -309,10 +300,9 @@ df_parcelas = pd.read_sql_query(
 )
 conn.close()
 
-# ----------------- SEPARADOR 1: DASHBOARD -----------------
+# 1. Visão Geral
 with tab_dash:
   st.subheader("Painel Geral de Finanças")
-
   if not df_user.empty:
     df_user["mes_ano"] = df_user["data"].dt.strftime("%Y-%m")
     mes_selecionado = st.selectbox(
@@ -362,16 +352,11 @@ with tab_dash:
           hide_index=True,
       )
   else:
-    st.info("Ainda não tem transações registadas. Utilize o menu à esquerda.")
+    st.info("Ainda não tem transações registadas.")
 
-# ----------------- SEPARADOR 2: CICLOS DIA 5 E DIA 20 -----------------
+# 2. Ciclos Dia 5 / Dia 20
 with tab_ciclos:
   st.subheader("Planeamento e Separação de Vencimentos")
-  st.caption(
-      "Organize os valores com vencimento associados aos dias 5 e 20 de cada"
-      " mês."
-  )
-
   if not df_user.empty:
     df_despesas = df_user[df_user["tipo"] == "Despesa"].copy()
     col_d5, col_d20 = st.columns(2)
@@ -384,7 +369,7 @@ with tab_ciclos:
       )
       df_5 = df_despesas[df_despesas["ciclo"] == "Dia 05"]
       tot_5 = df_5["valor"].sum()
-      st.metric("Total Previsto / Pago no Dia 5", f"R$ {tot_5:,.2f}")
+      st.metric("Total no Dia 5", f"R$ {tot_5:,.2f}")
       if not df_5.empty:
         st.dataframe(
             df_5[["data", "descricao", "categoria", "valor"]],
@@ -392,17 +377,17 @@ with tab_ciclos:
             hide_index=True,
         )
       else:
-        st.write("Sem contas associadas ao ciclo do Dia 5.")
+        st.write("Sem contas registadas no Dia 5.")
 
     with col_d20:
       st.markdown(
-          "<div class='fin-card'><h4>🗓️ Contas do Dia 20</h4><p>Compromissos do"
-          " adiantamento / meio do mês</p></div>",
+          "<div class='fin-card'><h4>🗓️ Contas do Dia 20</h4><p>Compromissos"
+          " do meio do mês</p></div>",
           unsafe_allow_html=True,
       )
       df_20 = df_despesas[df_despesas["ciclo"] == "Dia 20"]
       tot_20 = df_20["valor"].sum()
-      st.metric("Total Previsto / Pago no Dia 20", f"R$ {tot_20:,.2f}")
+      st.metric("Total no Dia 20", f"R$ {tot_20:,.2f}")
       if not df_20.empty:
         st.dataframe(
             df_20[["data", "descricao", "categoria", "valor"]],
@@ -410,29 +395,22 @@ with tab_ciclos:
             hide_index=True,
         )
       else:
-        st.write("Sem contas associadas ao ciclo do Dia 20.")
+        st.write("Sem contas registadas no Dia 20.")
   else:
-    st.info("Registe despesas para visualizar o balanço dos ciclos 5 e 20.")
+    st.info("Registe despesas para visualizar os ciclos.")
 
-# ----------------- SEPARADOR 3: FATURAS DE CARTÃO -----------------
+# 3. Faturas de Cartão
 with tab_cartao:
   st.subheader("Controlo de Faturas de Cartão de Crédito")
-  st.caption("Acompanhe o valor acumulado em compras no crédito por cada mês.")
-
   if not df_user.empty:
     df_cartao = df_user[df_user["metodo"] == "Cartão de Crédito"].copy()
     if not df_cartao.empty:
-      faturas_unicas = sorted(
-          df_cartao["mes_fatura"].dropna().unique(), reverse=True
-      )
-      fat_selecionada = st.selectbox("Selecione o Mês da Fatura:", faturas_unicas)
+      faturas = sorted(df_cartao["mes_fatura"].dropna().unique(), reverse=True)
+      fat_selecionada = st.selectbox("Selecione o Mês da Fatura:", faturas)
 
       df_fat = df_cartao[df_cartao["mes_fatura"] == fat_selecionada]
-      total_fatura = df_fat["valor"].sum()
-
       st.metric(
-          f"Valor Acumulado da Fatura ({fat_selecionada})",
-          f"R$ {total_fatura:,.2f}",
+          f"Total da Fatura ({fat_selecionada})", f"R$ {df_fat['valor'].sum():,.2f}"
       )
       st.dataframe(
           df_fat[["data", "descricao", "categoria", "valor"]],
@@ -440,44 +418,38 @@ with tab_cartao:
           hide_index=True,
       )
     else:
-      st.info("Nenhuma despesa efetuada no Cartão de Crédito até ao momento.")
+      st.info("Nenhuma compra efetuada no Cartão de Crédito.")
   else:
-    st.info("Sem registos de compras com cartão.")
+    st.info("Sem transações registadas.")
 
-# ----------------- SEPARADOR 4: FINANCIAMENTOS E PARCELAMENTOS -----------------
+# 4. Financiamentos e Parcelamentos
 with tab_parcelas:
   st.subheader("Financiamentos e Despesas Parceladas")
-  st.caption(
-      "Acompanhe o pagamento e a amortização contínua das parcelas do seu"
-      " veículo ou compras."
-  )
 
-  # Adicionar Novo Contrato / Financiamento
-  with st.expander("➕ Registar Novo Financiamento ou Compra Parcelada"):
+  with st.expander("➕ Registar Novo Financiamento ou Parcela"):
     with st.form("form_novo_contrato"):
       f_titulo = st.text_input(
-          "Identificação",
-          placeholder="Ex: Financiamento Chevrolet Onix / Smartphone",
+          "Descrição", placeholder="Ex: Financiamento Veículo, Smartphone"
       )
       f_tipo = st.selectbox(
-          "Modalidade", ["Financiamento Veículo", "Parcelamento Geral"]
+          "Tipo", ["Financiamento Veículo", "Parcelamento Geral"]
       )
       col_p1, col_p2 = st.columns(2)
       f_total_p = col_p1.number_input(
-          "Total de Parcelas Contratadas", min_value=2, value=48, step=1
+          "Total de Parcelas", min_value=2, value=48, step=1
       )
       f_pagas_p = col_p2.number_input(
-          "Parcelas Já Amortizadas / Pagas", min_value=0, value=0, step=1
+          "Parcelas Já Pagas", min_value=0, value=0, step=1
       )
       col_p3, col_p4 = st.columns(2)
       f_val_p = col_p3.number_input(
           "Valor da Parcela (R$)", min_value=0.01, value=850.0, step=10.0
       )
       f_dia_v = col_p4.selectbox(
-          "Dia Fixo de Pagamento", [5, 20, 10, 15, 25, 30]
+          "Dia de Pagamento", [5, 20, 10, 15, 25, 30]
       )
 
-      if st.form_submit_button("Criar Acompanhamento"):
+      if st.form_submit_button("Guardar Contrato"):
         if f_titulo.strip():
           conn = get_db_connection()
           c = conn.cursor()
@@ -501,67 +473,61 @@ with tab_parcelas:
           st.success("Contrato registado com sucesso!")
           st.rerun()
 
-  # Listagem e Pagamento de Parcelas
   if not df_parcelas.empty:
     for _, row in df_parcelas.iterrows():
-      contrato_id = row["id"]
+      cid = row["id"]
       restantes = row["total_parcelas"] - row["parcelas_pagas"]
       progresso = min(row["parcelas_pagas"] / row["total_parcelas"], 1.0)
-      saldo_devedor = restantes * row["valor_parcela"]
+      saldo_dev = restantes * row["valor_parcela"]
 
       st.markdown(f"#### 📌 {row['titulo']} ({row['tipo_contrato']})")
-      col_inf1, col_inf2, col_inf3 = st.columns(3)
-      col_inf1.metric(
-          "Progresso de Quitação",
-          f"{row['parcelas_pagas']} de {row['total_parcelas']} pagas",
+      c_i1, c_i2, c_i3 = st.columns(3)
+      c_i1.metric(
+          "Progresso", f"{row['parcelas_pagas']} de {row['total_parcelas']} pagas"
       )
-      col_inf2.metric("Valor da Parcela", f"R$ {row['valor_parcela']:,.2f}")
-      col_inf3.metric("Saldo Devedor Estimado", f"R$ {saldo_devedor:,.2f}")
+      c_i2.metric("Valor da Parcela", f"R$ {row['valor_parcela']:,.2f}")
+      c_i3.metric("Saldo Devedor", f"R$ {saldo_dev:,.2f}")
 
       st.progress(progresso)
 
-      col_btn1, col_btn2 = st.columns([1.5, 4])
-      with col_btn1:
-        if restantes > 0:
-          ciclo_auto = (
-              f"Dia {row['dia_vencimento']:02d}"
-              if row["dia_vencimento"] in [5, 20]
-              else "Outro Momento do Mês"
+      if restantes > 0:
+        c_ciclo = (
+            f"Dia {row['dia_vencimento']:02d}"
+            if row["dia_vencimento"] in [5, 20]
+            else "Outro Momento do Mês"
+        )
+        if st.button(
+            f"Pagar Próxima Parcela (#{row['parcelas_pagas'] + 1})",
+            key=f"p_{cid}",
+            type="primary",
+        ):
+          conn = get_db_connection()
+          c = conn.cursor()
+          c.execute(
+              "UPDATE parcelamentos SET parcelas_pagas = parcelas_pagas + 1"
+              " WHERE id = ?",
+              (cid,),
           )
-          if st.button(
-              f"Pagar Próxima Parcela (#{row['parcelas_pagas'] + 1})",
-              key=f"pay_{contrato_id}",
-              type="primary",
-          ):
-            conn = get_db_connection()
-            c = conn.cursor()
-            # 1. Incrementa parcela
-            c.execute(
-                "UPDATE parcelamentos SET parcelas_pagas = parcelas_pagas + 1"
-                " WHERE id = ?",
-                (contrato_id,),
-            )
-            # 2. Gera lançamento de despesa automático
-            desc_auto = f"Parcela {row['parcelas_pagas'] + 1}/{row['total_parcelas']} - {row['titulo']}"
-            c.execute(
-                """
-                            INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor)
-                            VALUES (?, ?, ?, 'Despesa', 'Financiamento/Dívida', 'Débito Direto', ?, ?)
-                        """,
-                (
-                    USER_ID,
-                    str(date.today()),
-                    desc_auto,
-                    ciclo_auto,
-                    row["valor_parcela"],
-                ),
-            )
-            conn.commit()
-            conn.close()
-            st.success("Parcela amortizada e registada no extrato!")
-            st.rerun()
-        else:
-          st.success("🎉 Financiamento totalmente liquidado!")
+          desc_auto = f"Parcela {row['parcelas_pagas'] + 1}/{row['total_parcelas']} - {row['titulo']}"
+          c.execute(
+              """
+                        INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor)
+                        VALUES (?, ?, ?, 'Despesa', 'Financiamento/Dívida', 'Débito Direto', ?, ?)
+                    """,
+              (
+                  USER_ID,
+                  str(date.today()),
+                  desc_auto,
+                  c_ciclo,
+                  row["valor_parcela"],
+              ),
+          )
+          conn.commit()
+          conn.close()
+          st.success("Parcela paga e registada no extrato!")
+          st.rerun()
+      else:
+        st.success("🎉 Totalmente liquidado!")
       st.divider()
   else:
-    st.info("Nenhum financiamento ou parcelamento ativo de momento.")
+    st.info("Nenhum financiamento ou parcelamento ativo.")
