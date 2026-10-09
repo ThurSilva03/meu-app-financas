@@ -1,6 +1,6 @@
-from datetime import date, datetime
 import hashlib
 import sqlite3
+from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 import pandas as pd
 import streamlit as st
@@ -35,7 +35,6 @@ def init_db():
             )
         """)
 
-    # Atualiza tabela usuarios caso o banco já existisse
     for col, tipocol in [("email", "TEXT"), ("celular", "TEXT")]:
       try:
         c.execute(f"ALTER TABLE usuarios ADD COLUMN {col} {tipocol}")
@@ -103,64 +102,68 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        /* Fundo e tipografia geral */
         .stApp {
             background-color: #0b0f19;
             color: #f1f5f9;
         }
         
         .block-container { 
-            padding-top: 5rem !important; 
-            padding-bottom: 3.5rem !important; 
+            padding-top: 4.5rem !important; 
+            padding-bottom: 3rem !important; 
         }
 
-        /* Estilo Sofisticado das Abas */
+        /* Estilo das Abas */
         button[data-baseweb="tab"] {
             font-size: 1.05rem !important;
-            padding: 12px 20px !important;
+            padding: 10px 22px !important;
             font-weight: 600 !important;
-            border-radius: 8px 8px 0 0 !important;
         }
 
-        /* Card de Login Premium / Glassmorphism */
+        /* Card de Login Premium / Clean */
         .login-box {
-            background: linear-gradient(145deg, rgba(30, 41, 59, 0.75), rgba(15, 23, 42, 0.95));
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 20px;
-            padding: 35px 30px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4), 0 0 20px rgba(99, 102, 241, 0.15);
+            background: linear-gradient(160deg, rgba(26, 34, 53, 0.85), rgba(15, 23, 42, 0.98));
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 22px;
+            padding: 40px 32px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5), 0 0 25px rgba(56, 189, 248, 0.08);
             margin-top: 1rem;
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
         }
 
         .login-header {
             text-align: center;
-            margin-bottom: 25px;
+            margin-bottom: 24px;
         }
 
         .login-title {
-            font-size: 2.1rem;
+            font-size: 2.2rem;
             font-weight: 800;
-            background: linear-gradient(90deg, #6366f1, #38bdf8);
+            letter-spacing: -0.5px;
+            background: linear-gradient(90deg, #38bdf8, #818cf8);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
-            margin-bottom: 5px;
+            margin-bottom: 4px;
         }
 
         .login-subtitle {
             color: #94a3b8;
-            font-size: 0.95rem;
+            font-size: 0.92rem;
+            letter-spacing: 0.2px;
         }
 
-        /* Cards de Métricas e Ciclos */
+        /* Botão sutil de recuperação estilo link */
+        div[data-testid="stDialog"] div {
+            border-radius: 16px;
+        }
+
+        /* Cards do Dashboard */
         .stMetric {
             background-color: #1e293b !important;
             border: 1px solid #334155 !important;
             border-radius: 12px !important;
             padding: 16px !important;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
         }
 
         .card-ciclo {
@@ -169,7 +172,6 @@ st.markdown(
             border-radius: 10px;
             border-left: 5px solid #38bdf8;
             margin-bottom: 14px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
     </style>
 """,
@@ -181,11 +183,67 @@ if "user_id" not in st.session_state:
   st.session_state["user_id"] = None
 if "user_nome" not in st.session_state:
   st.session_state["user_nome"] = None
+if "mostrar_recuperar" not in st.session_state:
+  st.session_state["mostrar_recuperar"] = False
 
 
-# --- Tela de Login / Cadastro / Recuperação de Senha ---
+# --- Modal de Recuperação de Senha ---
+@st.dialog("🔑 Recuperação de Acesso")
+def modal_recuperar_senha():
+  st.caption(
+      "Informe o seu usuário e o e-mail ou celular cadastrado para validar sua"
+      " identidade."
+  )
+  r_user = st.text_input(
+      "Usuário", key="rec_u", placeholder="Digite seu usuário"
+  ).lower()
+  r_contato = st.text_input(
+      "E-mail ou Celular cadastrado",
+      key="rec_cont",
+      placeholder="exemplo@email.com ou 11999998888",
+  ).lower()
+  r_new_pass = st.text_input(
+      "Nova Senha",
+      type="password",
+      key="rec_np",
+      placeholder="Mínimo 4 caracteres",
+  )
+
+  st.write("")
+  if st.button("Salvar Nova Senha", type="primary", use_container_width=True):
+    if r_user.strip() and r_contato.strip() and r_new_pass.strip():
+      if len(r_new_pass.strip()) < 4:
+        st.error("A nova senha deve ter no mínimo 4 caracteres.")
+      else:
+        with get_db() as conn:
+          c = conn.cursor()
+          c.execute(
+              """
+                        SELECT id FROM usuarios 
+                        WHERE lower(username) = ? AND (lower(email) = ? OR celular = ?)
+                    """,
+              (r_user.strip().lower(), r_contato.strip(), r_contato.strip()),
+          )
+          encontrado = c.fetchone()
+          if encontrado:
+            c.execute(
+                "UPDATE usuarios SET password_hash = ? WHERE id = ?",
+                (hash_password(r_new_pass.strip()), encontrado["id"]),
+            )
+            conn.commit()
+            st.success(
+                "🎉 Senha alterada com sucesso! Você já pode fechar esta janela"
+                " e entrar."
+            )
+          else:
+            st.error("Dados informados não conferem com o cadastro.")
+    else:
+      st.warning("Preencha todos os campos para recuperar a senha.")
+
+
+# --- Tela de Autenticação Clean ---
 def tela_autenticacao():
-  _, col_centro, _ = st.columns([1, 1.6, 1])
+  _, col_centro, _ = st.columns([1, 1.4, 1])
 
   with col_centro:
     st.markdown(
@@ -199,9 +257,7 @@ def tela_autenticacao():
         unsafe_allow_html=True,
     )
 
-    tab_log, tab_cad, tab_rec = st.tabs(
-        ["🔐 Acessar", "📝 Criar Conta", "🔑 Recuperar Senha"]
-    )
+    tab_log, tab_cad = st.tabs(["🔐 Acessar", "📝 Criar Conta"])
 
     # 1. ABA DE LOGIN
     with tab_log:
@@ -215,6 +271,18 @@ def tela_autenticacao():
           key="txt_login_p",
           placeholder="Digite sua senha",
       )
+
+      # Link sutil alinhado à direita antes do botão
+      col_esq, col_dir = st.columns([1, 1.3])
+      with col_dir:
+        st.markdown(
+            "<div style='text-align: right; padding-top: 4px;'>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Esqueceu a senha?", type="secondary", key="btn_open_rec"):
+          modal_recuperar_senha()
+        st.markdown("</div>", unsafe_allow_html=True)
+
       st.write("")
       if st.button("Entrar no Sistema", type="primary", use_container_width=True):
         if u_log.strip() and p_log.strip():
@@ -232,16 +300,18 @@ def tela_autenticacao():
             else:
               st.error("Usuário ou senha incorretos.")
         else:
-          st.warning("Preencha o usuário e a senha para entrar.")
+          st.warning("Preencha usuário e senha.")
 
-    # 2. ABA DE CADASTRO COM TRAVA DE DUPLICIDADE
+    # 2. ABA DE CADASTRO COM BLOQUEIO DE DUPLICIDADE
     with tab_cad:
       st.write("")
       c_nome = st.text_input(
           "Nome Completo", key="cad_nome", placeholder="Ex: Arthur Silva"
       )
       c_user = st.text_input(
-          "Nome de Usuário Único", key="cad_user", placeholder="Ex: arthur_bidu"
+          "Nome de Usuário Único",
+          key="cad_user",
+          placeholder="Ex: arthursilva",
       ).lower()
       c_email = st.text_input(
           "E-mail", key="cad_email", placeholder="seuemail@exemplo.com"
@@ -267,11 +337,10 @@ def tela_autenticacao():
             and c_celular.strip()
         ):
           if len(c_pass.strip()) < 4:
-            st.error("A senha deve conter no mínimo 4 dígitos.")
+            st.error("A senha deve conter no mínimo 4 caracteres.")
           else:
             with get_db() as conn:
               c = conn.cursor()
-              # Verifica se já existe um usuário com esse mesmo username ou nome completo
               c.execute(
                   "SELECT id FROM usuarios WHERE lower(username) = ? OR"
                   " lower(nome) = ?",
@@ -282,7 +351,7 @@ def tela_autenticacao():
               if existente:
                 st.error(
                     "❌ Já existe um cadastro com este nome de usuário ou nome"
-                    " completo. Escolha outro."
+                    " completo."
                 )
               else:
                 c.execute(
@@ -300,63 +369,11 @@ def tela_autenticacao():
                 )
                 conn.commit()
                 st.success(
-                    "✅ Conta criada com sucesso! Mude para a aba 'Acessar' para"
-                    " entrar."
+                    "✅ Conta criada com sucesso! Mude para o separador"
+                    " 'Acessar'."
                 )
         else:
-          st.warning("Preencha todos os campos obrigatórios para o cadastro.")
-
-    # 3. ABA DE RECUPERAÇÃO DE SENHA
-    with tab_rec:
-      st.write("")
-      st.caption(
-          "Confirme seu usuário e o e-mail ou celular cadastrado para redefinir"
-          " sua senha."
-      )
-      r_user = st.text_input(
-          "Seu Usuário", key="rec_u", placeholder="Digite seu usuário cadastrado"
-      ).lower()
-      r_contato = st.text_input(
-          "E-mail ou Celular Cadastrado",
-          key="rec_cont",
-          placeholder="Ex: seuemail@exemplo.com ou 11999998888",
-      ).lower()
-      r_new_pass = st.text_input(
-          "Nova Senha",
-          type="password",
-          key="rec_np",
-          placeholder="Digite a nova senha",
-      )
-      st.write("")
-      if st.button("Redefinir Senha", use_container_width=True):
-        if r_user.strip() and r_contato.strip() and r_new_pass.strip():
-          with get_db() as conn:
-            c = conn.cursor()
-            c.execute(
-                """
-                            SELECT id FROM usuarios 
-                            WHERE lower(username) = ? AND (lower(email) = ? OR celular = ?)
-                        """,
-                (r_user.strip().lower(), r_contato.strip(), r_contato.strip()),
-            )
-            encontrado = c.fetchone()
-
-            if encontrado:
-              c.execute(
-                  "UPDATE usuarios SET password_hash = ? WHERE id = ?",
-                  (hash_password(r_new_pass.strip()), encontrado["id"]),
-              )
-              conn.commit()
-              st.success(
-                  "🎉 Senha alterada com sucesso! Você já pode entrar com a"
-                  " nova senha."
-              )
-            else:
-              st.error(
-                  "Dados não conferem com nenhum usuário ativo no sistema."
-              )
-        else:
-          st.warning("Preencha todos os campos para redefinir a senha.")
+          st.warning("Preencha todos os campos obrigatórios.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
