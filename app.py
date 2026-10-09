@@ -83,9 +83,16 @@ def init_db():
                 total_parcelas INTEGER NOT NULL,
                 parcelas_pagas INTEGER NOT NULL DEFAULT 0,
                 valor_parcela REAL NOT NULL,
-                dia_vencimento INTEGER NOT NULL
+                dia_vencimento INTEGER NOT NULL,
+                data_inicio TEXT
             )
         """)
+
+    try:
+      c.execute("ALTER TABLE parcelamentos ADD COLUMN data_inicio TEXT")
+    except sqlite3.OperationalError:
+      pass
+
     conn.commit()
 
 
@@ -380,7 +387,7 @@ if st.sidebar.button("Terminar Sessão"):
 
 st.sidebar.divider()
 
-# --- Barra Lateral: Lançamento Reativo ---
+# --- Barra Lateral: Lançamento Rápido ---
 st.sidebar.header("➕ Novo Registo")
 
 tipo_mov = st.sidebar.selectbox("Tipo", ["Despesa", "Receita"], key="sb_tipo")
@@ -463,13 +470,12 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
               else (valor_input / num_parcelas)
           )
 
-          # Se for Financiamento/Dívida, garante registro direto na tabela de parcelamentos
           if cat_mov == "Financiamento/Dívida":
             dia_v = data_primeira_cobranca.day
             c.execute(
                 """
-                            INSERT INTO parcelamentos (usuario_id, titulo, tipo_contrato, total_parcelas, parcelas_pagas, valor_parcela, dia_vencimento)
-                            VALUES (?, ?, ?, ?, 0, ?, ?)
+                            INSERT INTO parcelamentos (usuario_id, titulo, tipo_contrato, total_parcelas, parcelas_pagas, valor_parcela, dia_vencimento, data_inicio)
+                            VALUES (?, ?, ?, ?, 0, ?, ?, ?)
                         """,
                 (
                     USER_ID,
@@ -482,10 +488,10 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
                     int(num_parcelas),
                     float(val_parcela),
                     int(dia_v),
+                    str(data_primeira_cobranca),
                 ),
             )
 
-          # Cria as parcelas mensais na tabela de transações
           for i in range(int(num_parcelas)):
             dt_parcela = data_primeira_cobranca + relativedelta(months=i)
             fat_str = dt_parcela.strftime("%Y-%m")
@@ -559,7 +565,6 @@ if not df_trans.empty:
 else:
   df_trans["mes_ano"] = []
 
-# Mapeia todos os meses existentes nas transações
 meses_set = set([date.today().strftime("%Y-%m")])
 if not df_trans.empty:
   for m in df_trans["mes_ano"].dropna():
@@ -593,7 +598,7 @@ with tab_dash:
       key="sel_mes_visao_geral",
   )
 
-  # A) Fatura Cartão de Crédito do Mês Selecionado
+  # A) Fatura Cartão
   df_cartao_mes = pd.DataFrame()
   if not df_trans.empty:
     df_cartao_mes = df_trans[
@@ -605,7 +610,7 @@ with tab_dash:
       df_cartao_mes["valor"].sum() if not df_cartao_mes.empty else 0.0
   )
 
-  # B) Parcela de Financiamento que vence NO MÊS SELECIONADO
+  # B) Parcela de Financiamento que vence NO MÊS
   df_fin_mes = pd.DataFrame()
   if not df_trans.empty:
     df_fin_mes = df_trans[
@@ -617,7 +622,7 @@ with tab_dash:
       df_fin_mes["valor"].sum() if not df_fin_mes.empty else 0.0
   )
 
-  # C) Outras Contas / Boletos do Mês Selecionado (exceto cartão e financiamento)
+  # C) Outras Contas / Boletos do Mês
   df_outros_mes = pd.DataFrame()
   if not df_trans.empty:
     df_outros_mes = df_trans[
@@ -634,7 +639,6 @@ with tab_dash:
       total_cartao_mes + total_financiamentos_mes + total_outros_mes
   )
 
-  # Cards do Mês Selecionado
   c1, c2, c3, c4 = st.columns(4)
   c1.metric("💳 Fatura do Cartão", f"R$ {total_cartao_mes:,.2f}")
   c2.metric("🚗 Parcela Financiamento", f"R$ {total_financiamentos_mes:,.2f}")
@@ -686,7 +690,7 @@ with tab_dash:
     else:
       st.info("Nenhum boleto ou parcela de financiamento para este mês.")
 
-# 2. CICLOS DIA 5 E DIA 20 (FILTRADOS PELO MÊS SELECIONADO)
+# 2. CICLOS DIA 5 E DIA 20
 with tab_ciclos:
   st.subheader("Separação de Gastos por Ciclo de Vencimento")
   mes_ciclo_sel = st.selectbox(
@@ -799,36 +803,71 @@ with tab_parcelas:
       c_pagas_p = cp2.number_input(
           "Prestações Já Amortizadas", min_value=0, max_value=360, value=0, step=1
       )
-      cp3, cp4 = st.columns(2)
+      cp3, cp4, cp5 = st.columns(3)
       c_val_p = cp3.number_input(
-          "Valor da Parcela (R$)", min_value=0.01, value=850.0, step=10.0
+          "Valor da Parcela (R$)", min_value=0.01, value=1300.0, step=50.0
       )
       c_dia = cp4.selectbox("Dia Fixo de Vencimento", [5, 20, 10, 15, 25, 30])
+      c_dt_inicio = cp5.date_input(
+          "Data da 1ª Cobrança / Início", value=date.today()
+      )
 
       btn_fin = st.form_submit_button(
           "Guardar Financiamento", use_container_width=True
       )
       if btn_fin:
-        if c_tit.strip():
+        nome_valido = c_tit.strip() if c_tit else ""
+        if nome_valido:
           with get_db() as conn:
             c = conn.cursor()
+            # 1. Salva o contrato principal
             c.execute(
                 """
-                            INSERT INTO parcelamentos (usuario_id, titulo, tipo_contrato, total_parcelas, parcelas_pagas, valor_parcela, dia_vencimento)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO parcelamentos (usuario_id, titulo, tipo_contrato, total_parcelas, parcelas_pagas, valor_parcela, dia_vencimento, data_inicio)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                 (
                     USER_ID,
-                    c_tit.strip(),
+                    nome_valido,
                     c_tipo,
                     int(c_tot_p),
                     int(c_pagas_p),
                     float(c_val_p),
                     int(c_dia),
+                    str(c_dt_inicio),
                 ),
             )
+
+            # 2. Gera automaticamente as parcelas pendentes na agenda mensal
+            ciclo_calc = (
+                f"Dia {int(c_dia):02d}"
+                if int(c_dia) in [5, 20]
+                else "Outro Momento"
+            )
+            for i in range(int(c_pagas_p), int(c_tot_p)):
+              dt_p = c_dt_inicio + relativedelta(months=i)
+              fat_s = dt_p.strftime("%Y-%m")
+              desc_p = f"{nome_valido} ({i + 1}/{int(c_tot_p)})"
+              c.execute(
+                  """
+                                INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
+                                VALUES (?, ?, ?, 'Despesa', 'Financiamento/Dívida', 'Boleto', ?, ?, ?, ?, ?)
+                            """,
+                  (
+                      USER_ID,
+                      str(dt_p),
+                      desc_p,
+                      ciclo_calc,
+                      float(c_val_p),
+                      fat_s,
+                      i + 1,
+                      int(c_tot_p),
+                  ),
+              )
             conn.commit()
-          st.success("Financiamento guardado com sucesso!")
+          st.success(
+              "Financiamento guardado e parcelas integradas à agenda mensal!"
+          )
           st.rerun()
         else:
           st.error("Indique o nome do financiamento.")
@@ -842,8 +881,19 @@ with tab_parcelas:
       val = float(row["valor_parcela"])
       prog = min(pagas / tot, 1.0)
       devedor = restam * val
+      dt_inicio_exibir = (
+          row["data_inicio"] if "data_inicio" in row and row["data_inicio"] else ""
+      )
 
-      st.markdown(f"#### 📌 #{cid} - {row['titulo']} — *{row['tipo_contrato']}*")
+      st.markdown(
+          f"#### 📌 #{cid} - {row['titulo']} — *{row['tipo_contrato']}*"
+          + (
+              f"  <small style='color:#94a3b8;'>(Início: {dt_inicio_exibir})</small>"
+              if dt_inicio_exibir
+              else ""
+          ),
+          unsafe_allow_html=True,
+      )
       i1, i2, i3 = st.columns(3)
       i1.metric(
           "Prestações Pagas",
@@ -866,7 +916,7 @@ with tab_parcelas:
               else "Outro Momento"
           )
           if st.button(
-              f"Pagar Parcela #{pagas + 1} de {tot}",
+              f"Marcar Parcela #{pagas + 1} como Paga",
               key=f"btn_pg_{cid}",
               type="primary",
           ):
@@ -877,25 +927,8 @@ with tab_parcelas:
                   " WHERE id = ?",
                   (cid,),
               )
-              desc_auto = f"Parcela {pagas + 1}/{tot} - {row['titulo']}"
-              c.execute(
-                  """
-                                INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
-                                VALUES (?, ?, ?, 'Despesa', 'Financiamento/Dívida', 'Boleto', ?, ?, ?, ?, ?)
-                            """,
-                  (
-                      USER_ID,
-                      str(date.today()),
-                      desc_auto,
-                      ciclo_autom,
-                      val,
-                      None,
-                      pagas + 1,
-                      tot,
-                  ),
-              )
               conn.commit()
-            st.success(f"Parcela #{pagas + 1} paga e registada no extrato!")
+            st.success(f"Parcela #{pagas + 1} amortizada com sucesso!")
             st.rerun()
         else:
           st.success("🎉 Financiamento totalmente liquidado!")
