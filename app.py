@@ -302,7 +302,6 @@ def tela_autenticacao():
           st.warning("Preencha o utilizador e a palavra-passe.")
 
     with tab_cad:
-      st.write("")
       c_nome = st.text_input(
           "Nome Completo", key="cad_nome", placeholder="Ex: Arthur Silva"
       )
@@ -565,7 +564,7 @@ if not df_trans.empty:
 else:
   df_trans["mes_ano"] = []
 
-# Mapeia todos os meses existentes
+# Mapeia todos os meses relevantes
 meses_set = set([date.today().strftime("%Y-%m")])
 if not df_trans.empty:
   for m in df_trans["mes_ano"].dropna():
@@ -573,15 +572,17 @@ if not df_trans.empty:
   for m in df_trans["mes_fatura"].dropna():
     meses_set.add(m)
 
-# Inclui os meses futuros dos financiamentos ativos da tabela parcelamentos
+# Inclui os meses dos contratos em parcelamentos
 if not df_parcelas.empty:
   for _, p_row in df_parcelas.iterrows():
     if "data_inicio" in p_row and p_row["data_inicio"]:
       try:
         dt_ini = datetime.strptime(str(p_row["data_inicio"]), "%Y-%m-%d").date()
-        for k in range(int(p_row["total_parcelas"])):
-          m_futuro = (dt_ini + relativedelta(months=k)).strftime("%Y-%m")
-          meses_set.add(m_futuro)
+        tot = int(p_row["total_parcelas"])
+        pag = int(p_row["parcelas_pagas"])
+        rest = tot - pag
+        for k in range(rest):
+          meses_set.add((dt_ini + relativedelta(months=k)).strftime("%Y-%m"))
       except Exception:
         pass
 
@@ -600,7 +601,7 @@ tab_dash, tab_ciclos, tab_cartao, tab_parcelas, tab_gestao = st.tabs([
     "⚙️ Editar / Excluir",
 ])
 
-# 1. VISÃO GERAL DO MÊS (AJUSTE ROBUSTO DA PARCELA DO FINANCIAMENTO)
+# 1. VISÃO GERAL DO MÊS
 with tab_dash:
   st.subheader("📊 Gastos e Compromissos do Mês")
 
@@ -623,9 +624,11 @@ with tab_dash:
       df_cartao_mes["valor"].sum() if not df_cartao_mes.empty else 0.0
   )
 
-  # B) Parcela de Financiamento que vence NO MÊS
-  # 1. Busca por transações registradas no mês que sejam de Financiamento/Dívida ou tenham financiamento na descrição
-  df_fin_mes = pd.DataFrame()
+  # B) PARCELAS DE FINANCIAMENTO NO MÊS SELECIONADO
+  itens_financiamento_mes = []
+  total_financiamentos_mes = 0.0
+
+  # 1. Checa transações salvas explicitamente
   if not df_trans.empty:
     filtro_fin = (
         (df_trans["mes_ano"] == mes_selecionado)
@@ -635,32 +638,58 @@ with tab_dash:
             | df_trans["descricao"].str.contains("Financiamento", case=False, na=False)
         )
     )
-    df_fin_mes = df_trans[filtro_fin].copy()
+    df_fin_trans = df_trans[filtro_fin].copy()
+    for _, r in df_fin_trans.iterrows():
+      itens_financiamento_mes.append({
+          "data": r["data"],
+          "descricao": r["descricao"],
+          "categoria": r["categoria"],
+          "metodo": r["metodo"],
+          "parcela_atual": r["parcela_atual"],
+          "total_parcelas": r["total_parcelas"],
+          "valor": float(r["valor"]),
+      })
+      total_financiamentos_mes += float(r["valor"])
 
-  total_financiamentos_mes = (
-      df_fin_mes["valor"].sum() if not df_fin_mes.empty else 0.0
-  )
-
-  # 2. Se não houver transações individuais lançadas para este mês, calcula a partir dos contratos cadastrados em parcelamentos
+  # 2. Se nenhuma transação gravada foi encontrada para o mês, projeta diretamente a partir da tabela 'parcelamentos'
   if total_financiamentos_mes == 0.0 and not df_parcelas.empty:
-    for _, parc_item in df_parcelas.iterrows():
-      tot_p = int(parc_item["total_parcelas"])
-      pagas_p = int(parc_item["parcelas_pagas"])
-      if pagas_p < tot_p:
-        # Verifica se o mês selecionado está no período de cobrança deste contrato
-        if "data_inicio" in parc_item and parc_item["data_inicio"]:
-          try:
-            d_ini = datetime.strptime(str(parc_item["data_inicio"]), "%Y-%m-%d").date()
-            meses_contrato = [
-                (d_ini + relativedelta(months=idx)).strftime("%Y-%m")
-                for idx in range(pagas_p, tot_p)
-            ]
-            if mes_selecionado in meses_contrato:
-              total_financiamentos_mes += float(parc_item["valor_parcela"])
-          except Exception:
-            total_financiamentos_mes += float(parc_item["valor_parcela"])
-        else:
-          total_financiamentos_mes += float(parc_item["valor_parcela"])
+    for _, p_row in df_parcelas.iterrows():
+      tot = int(p_row["total_parcelas"])
+      pag = int(p_row["parcelas_pagas"])
+      rest = tot - pag
+      if rest > 0:
+        dt_ini_str = (
+            p_row["data_inicio"]
+            if "data_inicio" in p_row and p_row["data_inicio"]
+            else None
+        )
+        try:
+          dt_ini = (
+              datetime.strptime(str(dt_ini_str), "%Y-%m-%d").date()
+              if dt_ini_str
+              else date.today()
+          )
+        except Exception:
+          dt_ini = date.today()
+
+        # Projeta os meses das parcelas restantes (ex: parcela 37 vence no mês de início, 38 no mês seguinte, etc.)
+        for step in range(rest):
+          dt_venc_parc = dt_ini + relativedelta(months=step)
+          mes_venc_parc = dt_venc_parc.strftime("%Y-%m")
+
+          if mes_venc_parc == mes_selecionado:
+            num_p_atual = pag + step + 1
+            val_p = float(p_row["valor_parcela"])
+            total_financiamentos_mes += val_p
+            itens_financiamento_mes.append({
+                "data": str(dt_venc_parc),
+                "descricao": f"{p_row['titulo']} ({num_p_atual}/{tot})",
+                "categoria": "Financiamento/Dívida",
+                "metodo": "Boleto",
+                "parcela_atual": num_p_atual,
+                "total_parcelas": tot,
+                "valor": val_p,
+            })
 
   # C) Outras Contas / Boletos do Mês
   df_outros_mes = pd.DataFrame()
@@ -720,24 +749,25 @@ with tab_dash:
     st.write(
         f"##### 🚗 Parcelas de Financiamentos & Boletos ({mes_selecionado})"
     )
-    df_compr_mes = pd.concat([df_fin_mes, df_outros_mes])
-    if not df_compr_mes.empty:
-      df_compr_show = df_compr_mes[[
-          "data",
-          "descricao",
-          "categoria",
-          "metodo",
-          "parcela_atual",
-          "total_parcelas",
-          "valor",
-      ]].copy()
+    lista_comprovantes = []
+    if itens_financiamento_mes:
+      lista_comprovantes.extend(itens_financiamento_mes)
+    if not df_outros_mes.empty:
+      for _, o_row in df_outros_mes.iterrows():
+        lista_comprovantes.append({
+            "data": o_row["data"],
+            "descricao": o_row["descricao"],
+            "categoria": o_row["categoria"],
+            "metodo": o_row["metodo"],
+            "parcela_atual": o_row["parcela_atual"],
+            "total_parcelas": o_row["total_parcelas"],
+            "valor": float(o_row["valor"]),
+        })
+
+    if lista_comprovantes:
+      df_compr_show = pd.DataFrame(lista_comprovantes)
       df_compr_show["valor"] = df_compr_show["valor"].map("R$ {:,.2f}".format)
       st.dataframe(df_compr_show, use_container_width=True, hide_index=True)
-    elif total_financiamentos_mes > 0:
-      st.info(
-          f"Existe parcela de financiamento ativa de R$"
-          f" {total_financiamentos_mes:,.2f} prevista para este mês."
-      )
     else:
       st.info("Nenhum boleto ou parcela de financiamento para este mês.")
 
@@ -751,11 +781,74 @@ with tab_ciclos:
       key="sel_mes_ciclos",
   )
 
+  # Junta transações do mês e parcelas ativas de financiamento projetadas para o mês
+  itens_ciclo_todos = []
   if not df_trans.empty:
     df_ciclos_mes = df_trans[
         (df_trans["mes_ano"] == mes_ciclo_sel)
         & (df_trans["tipo"] == "Despesa")
     ].copy()
+    for _, tr in df_ciclos_mes.iterrows():
+      itens_ciclo_todos.append({
+          "id": tr["id"],
+          "data": tr["data"],
+          "descricao": tr["descricao"],
+          "metodo": tr["metodo"],
+          "categoria": tr["categoria"],
+          "ciclo": tr["ciclo"],
+          "valor": float(tr["valor"]),
+      })
+
+  # Se houver contrato ativo projetado no mês que ainda não esteja no extrato de transações
+  if not df_parcelas.empty:
+    for _, p_row in df_parcelas.iterrows():
+      tot = int(p_row["total_parcelas"])
+      pag = int(p_row["parcelas_pagas"])
+      rest = tot - pag
+      if rest > 0:
+        dt_ini_str = (
+            p_row["data_inicio"]
+            if "data_inicio" in p_row and p_row["data_inicio"]
+            else None
+        )
+        try:
+          dt_ini = (
+              datetime.strptime(str(dt_ini_str), "%Y-%m-%d").date()
+              if dt_ini_str
+              else date.today()
+          )
+        except Exception:
+          dt_ini = date.today()
+
+        for step in range(rest):
+          dt_parc_v = dt_ini + relativedelta(months=step)
+          if dt_parc_v.strftime("%Y-%m") == mes_ciclo_sel:
+            # Verifica se já não foi listado via transações
+            ja_existe = any(
+                p_row["titulo"].lower() in str(x["descricao"]).lower()
+                for x in itens_ciclo_todos
+            )
+            if not ja_existe:
+              dia_venc = int(p_row["dia_vencimento"])
+              ciclo_calc = (
+                  f"Dia {dia_venc:02d}"
+                  if dia_venc in [5, 20]
+                  else "Outro Momento"
+              )
+              itens_ciclo_todos.append({
+                  "id": f"P-{p_row['id']}",
+                  "data": str(dt_parc_v),
+                  "descricao": (
+                      f"{p_row['titulo']} ({pag + step + 1}/{tot}) [Contrato]"
+                  ),
+                  "metodo": "Boleto",
+                  "categoria": "Financiamento/Dívida",
+                  "ciclo": ciclo_calc,
+                  "valor": float(p_row["valor_parcela"]),
+              })
+
+  if itens_ciclo_todos:
+    df_ciclos_consolidado = pd.DataFrame(itens_ciclo_todos)
     col5, col20 = st.columns(2)
 
     with col5:
@@ -764,7 +857,9 @@ with tab_ciclos:
           f" ({mes_ciclo_sel})</h4></div>",
           unsafe_allow_html=True,
       )
-      df_5 = df_ciclos_mes[df_ciclos_mes["ciclo"] == "Dia 05"].copy()
+      df_5 = df_ciclos_consolidado[
+          df_ciclos_consolidado["ciclo"] == "Dia 05"
+      ].copy()
       st.metric(f"Total no Dia 5 ({mes_ciclo_sel})", f"R$ {df_5['valor'].sum():,.2f}")
       if not df_5.empty:
         df_5_tab = df_5[[
@@ -786,7 +881,9 @@ with tab_ciclos:
           f" ({mes_ciclo_sel})</h4></div>",
           unsafe_allow_html=True,
       )
-      df_20 = df_ciclos_mes[df_ciclos_mes["ciclo"] == "Dia 20"].copy()
+      df_20 = df_ciclos_consolidado[
+          df_ciclos_consolidado["ciclo"] == "Dia 20"
+      ].copy()
       st.metric(
           f"Total no Dia 20 ({mes_ciclo_sel})", f"R$ {df_20['valor'].sum():,.2f}"
       )
@@ -860,7 +957,7 @@ with tab_parcelas:
       )
       c_dia = cp4.selectbox("Dia Fixo de Vencimento", [5, 20, 10, 15, 25, 30])
       c_dt_inicio = cp5.date_input(
-          "Data da 1ª Cobrança / Início", value=date.today()
+          "Data da Próxima Cobrança / Início", value=date.today()
       )
 
       btn_fin = st.form_submit_button(
@@ -887,32 +984,6 @@ with tab_parcelas:
                     str(c_dt_inicio),
                 ),
             )
-
-            ciclo_calc = (
-                f"Dia {int(c_dia):02d}"
-                if int(c_dia) in [5, 20]
-                else "Outro Momento"
-            )
-            for i in range(int(c_pagas_p), int(c_tot_p)):
-              dt_p = c_dt_inicio + relativedelta(months=i)
-              fat_s = dt_p.strftime("%Y-%m")
-              desc_p = f"{nome_valido} ({i + 1}/{int(c_tot_p)})"
-              c.execute(
-                  """
-                                INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
-                                VALUES (?, ?, ?, 'Despesa', 'Financiamento/Dívida', 'Boleto', ?, ?, ?, ?, ?)
-                            """,
-                  (
-                      USER_ID,
-                      str(dt_p),
-                      desc_p,
-                      ciclo_calc,
-                      float(c_val_p),
-                      fat_s,
-                      i + 1,
-                      int(c_tot_p),
-                  ),
-              )
             conn.commit()
           st.success(
               "Financiamento guardado e parcelas integradas à agenda mensal!"
@@ -983,18 +1054,11 @@ with tab_parcelas:
           st.success("🎉 Financiamento totalmente liquidado!")
       st.divider()
   else:
-    st.info(
-        "Nenhum contrato ativo listado. Utilize o formulário acima para"
-        " cadastrar o acompanhamento de longo prazo."
-    )
+    st.info("Nenhum contrato ativo listado.")
 
-# 5. GERENCIAR, EDITAR E EXCLUIR (AGRUPADO INTELIGENTEMENTE)
+# 5. GERENCIAR, EDITAR E EXCLUIR
 with tab_gestao:
   st.subheader("⚙️ Painel de Edição e Eliminação Agrupado")
-  st.caption(
-      "Edite compras parceladas ou financiamentos em bloco, ou ajuste"
-      " lançamentos individuais."
-  )
 
   sec_pacotes, sec_avulsas, sec_contratos = st.tabs([
       "📦 Compras e Financiamentos Parcelados",
