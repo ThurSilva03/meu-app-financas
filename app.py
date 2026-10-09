@@ -56,7 +56,8 @@ def init_db():
                 valor REAL NOT NULL,
                 mes_fatura TEXT,
                 parcela_atual INTEGER DEFAULT 1,
-                total_parcelas INTEGER DEFAULT 1
+                total_parcelas INTEGER DEFAULT 1,
+                pago INTEGER DEFAULT 0
             )
         """)
 
@@ -67,6 +68,7 @@ def init_db():
         ("mes_fatura", "TEXT"),
         ("parcela_atual", "INTEGER DEFAULT 1"),
         ("total_parcelas", "INTEGER DEFAULT 1"),
+        ("pago", "INTEGER DEFAULT 0"),
     ]
     for col, tipocol in colunas_extras:
       try:
@@ -430,12 +432,11 @@ if tipo_mov == "Despesa":
   )
 
   if metodo_mov == "Cartão de Crédito":
-    # Permite escolher explicitamente a qual fatura essa compra/despesa pertence
     mes_fatura_alvo = st.sidebar.text_input(
         "Mês da Fatura de Destino (AAAA-MM)",
         value=data_compra.strftime("%Y-%m"),
         key="sb_mes_fat_alvo",
-        help="Ex: 2026-10 para a fatura de Outubro, 2026-11 para Novembro",
+        help="Ex: 2026-10 para fatura de Outubro, 2026-11 para Novembro",
     )
     num_parcelas = st.sidebar.number_input(
         "Quantidade de Prestações",
@@ -480,7 +481,7 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
       with get_db() as conn:
         c = conn.cursor()
 
-        # 1. Se for Cartão de Crédito
+        # 1. Cartão de Crédito
         if tipo_mov == "Despesa" and metodo_mov == "Cartão de Crédito":
           val_parcela = (
               valor_input / num_parcelas
@@ -502,10 +503,11 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
                 if num_parcelas > 1
                 else desc_mov.strip()
             )
+            # Todo lançamento entra como 0 (Pendente)
             c.execute(
                 """
-                            INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas, pago)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                         """,
                 (
                     USER_ID,
@@ -522,7 +524,7 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
                 ),
             )
 
-        # 2. Se for Financiamento/Dívida parcelado fora do cartão
+        # 2. Financiamento/Dívida parcelado
         elif (
             tipo_mov == "Despesa"
             and num_parcelas > 1
@@ -561,8 +563,8 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
             desc_parcelada = f"{desc_mov.strip()} ({i + 1}/{num_parcelas})"
             c.execute(
                 """
-                            INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas, pago)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                         """,
                 (
                     USER_ID,
@@ -583,8 +585,8 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
         else:
           c.execute(
               """
-                        INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+                        INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas, pago)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 0)
                     """,
               (
                   USER_ID,
@@ -661,7 +663,7 @@ tab_dash, tab_ciclos, tab_cartao, tab_parcelas, tab_gestao = st.tabs([
     "⚙️ Editar / Excluir",
 ])
 
-# 1. VISÃO GERAL DO MÊS
+# 1. VISÃO GERAL DO MÊS (CONTROLO RIGOROSO DE PAGAMENTOS)
 with tab_dash:
   st.subheader("📊 Gastos e Compromissos do Mês")
 
@@ -700,6 +702,7 @@ with tab_dash:
     df_fin_trans = df_trans[filtro_fin].copy()
     for _, r in df_fin_trans.iterrows():
       itens_financiamento_mes.append({
+          "id": r["id"],
           "data": r["data"],
           "descricao": r["descricao"],
           "categoria": r["categoria"],
@@ -707,6 +710,7 @@ with tab_dash:
           "parcela_atual": r["parcela_atual"],
           "total_parcelas": r["total_parcelas"],
           "valor": float(r["valor"]),
+          "pago": int(r["pago"]) if "pago" in r else 0,
       })
       total_financiamentos_mes += float(r["valor"])
 
@@ -737,6 +741,7 @@ with tab_dash:
             val_p = float(p_row["valor_parcela"])
             total_financiamentos_mes += val_p
             itens_financiamento_mes.append({
+                "id": f"P-{p_row['id']}",
                 "data": str(dt_venc_parc),
                 "descricao": f"{p_row['titulo']} ({num_p_atual}/{tot})",
                 "categoria": "Financiamento/Dívida",
@@ -744,6 +749,7 @@ with tab_dash:
                 "parcela_atual": num_p_atual,
                 "total_parcelas": tot,
                 "valor": val_p,
+                "pago": 0,
             })
 
   # C) Outras Contas / Boletos do Mês
@@ -769,34 +775,73 @@ with tab_dash:
       total_cartao_mes + total_financiamentos_mes + total_outros_mes
   )
 
+  # Cálculo de Pagos e Pendentes
+  total_pago_mes = 0.0
+  if not df_cartao_mes.empty and "pago" in df_cartao_mes:
+    total_pago_mes += df_cartao_mes[df_cartao_mes["pago"] == 1]["valor"].sum()
+  if not df_outros_mes.empty and "pago" in df_outros_mes:
+    total_pago_mes += df_outros_mes[df_outros_mes["pago"] == 1]["valor"].sum()
+  for fin_i in itens_financiamento_mes:
+    if fin_i.get("pago") == 1:
+      total_pago_mes += fin_i["valor"]
+
+  pendente_mes = max(total_gastos_mes - total_pago_mes, 0.0)
+
+  # Cards de Métricas
   c1, c2, c3, c4 = st.columns(4)
   c1.metric("💳 Fatura do Cartão", f"R$ {total_cartao_mes:,.2f}")
   c2.metric("🚗 Parcela Financiamento", f"R$ {total_financiamentos_mes:,.2f}")
-  c3.metric("📄 Boletos / Outras Contas", f"R$ {total_outros_mes:,.2f}")
+  c3.metric(
+      "✅ Já Pago no Mês",
+      f"R$ {total_pago_mes:,.2f}",
+      delta=f"R$ {total_pago_mes:,.2f}",
+      delta_color="normal",
+  )
   c4.metric(
-      f"🔥 TOTAL DO MÊS ({mes_selecionado})",
-      f"R$ {total_gastos_mes:,.2f}",
-      delta=f"R$ {total_gastos_mes:,.2f}",
+      f"⏳ Pendente a Pagar ({mes_selecionado})",
+      f"R$ {pendente_mes:,.2f}",
+      delta=(
+          f"R$ -{pendente_mes:,.2f}"
+          if pendente_mes > 0
+          else "100% Liquidado"
+      ),
       delta_color="inverse",
   )
 
   st.divider()
 
   col_det1, col_det2 = st.columns(2)
+
   with col_det1:
     st.write(f"##### 💳 Detalhes da Fatura do Cartão ({mes_selecionado})")
     if not df_cartao_mes.empty:
-      df_cartao_show = df_cartao_mes[[
-          "data",
-          "descricao",
-          "parcela_atual",
-          "total_parcelas",
-          "valor",
-      ]].copy()
-      df_cartao_show["valor"] = df_cartao_show["valor"].map(
-          "R$ {:,.2f}".format
-      )
-      st.dataframe(df_cartao_show, use_container_width=True, hide_index=True)
+      for _, c_row in df_cartao_mes.iterrows():
+        id_t = c_row["id"]
+        esta_pago = bool(c_row["pago"] == 1) if "pago" in c_row else False
+        col_c_txt, col_c_chk = st.columns([3.5, 1.5])
+        with col_c_txt:
+          badge = "🟢 Pago" if esta_pago else "🟡 Pendente"
+          st.markdown(
+              f"**{c_row['descricao']}** ({badge})  \n"
+              f"<small style='color:#94a3b8;'>Data: {c_row['data']} • R$"
+              f" {c_row['valor']:,.2f}</small>",
+              unsafe_allow_html=True,
+          )
+        with col_c_chk:
+          if st.button(
+              "Marcar Pago" if not esta_pago else "Desmarcar",
+              key=f"btn_pago_c_{id_t}",
+              use_container_width=True,
+          ):
+            with get_db() as conn:
+              c = conn.cursor()
+              c.execute(
+                  "UPDATE transacoes SET pago = ? WHERE id = ? AND usuario_id ="
+                  " ?",
+                  (0 if esta_pago else 1, id_t, USER_ID),
+              )
+              conn.commit()
+            st.rerun()
     else:
       st.info("Nenhuma fatura de cartão prevista para este mês.")
 
@@ -810,6 +855,7 @@ with tab_dash:
     if not df_outros_mes.empty:
       for _, o_row in df_outros_mes.iterrows():
         lista_comprovantes.append({
+            "id": o_row["id"],
             "data": o_row["data"],
             "descricao": o_row["descricao"],
             "categoria": o_row["categoria"],
@@ -817,12 +863,40 @@ with tab_dash:
             "parcela_atual": o_row["parcela_atual"],
             "total_parcelas": o_row["total_parcelas"],
             "valor": float(o_row["valor"]),
+            "pago": int(o_row["pago"]) if "pago" in o_row else 0,
         })
 
     if lista_comprovantes:
-      df_compr_show = pd.DataFrame(lista_comprovantes)
-      df_compr_show["valor"] = df_compr_show["valor"].map("R$ {:,.2f}".format)
-      st.dataframe(df_compr_show, use_container_width=True, hide_index=True)
+      for item_c in lista_comprovantes:
+        item_id = item_c["id"]
+        esta_pago_b = bool(item_c.get("pago") == 1)
+        col_b_txt, col_b_chk = st.columns([3.5, 1.5])
+        with col_b_txt:
+          badge_b = "🟢 Pago" if esta_pago_b else "🟡 Pendente"
+          st.markdown(
+              f"**{item_c['descricao']}** ({badge_b})  \n"
+              f"<small style='color:#94a3b8;'>Vencimento: {item_c['data']} • R$"
+              f" {item_c['valor']:,.2f}</small>",
+              unsafe_allow_html=True,
+          )
+        with col_b_chk:
+          if isinstance(item_id, int):
+            if st.button(
+                "Marcar Pago" if not esta_pago_b else "Desmarcar",
+                key=f"btn_pago_b_{item_id}",
+                use_container_width=True,
+            ):
+              with get_db() as conn:
+                c = conn.cursor()
+                c.execute(
+                    "UPDATE transacoes SET pago = ? WHERE id = ? AND usuario_id"
+                    " = ?",
+                    (0 if esta_pago_b else 1, item_id, USER_ID),
+                )
+                conn.commit()
+              st.rerun()
+          else:
+            st.caption("Contrato fixo")
     else:
       st.info("Nenhum boleto ou parcela de financiamento para este mês.")
 
@@ -846,6 +920,7 @@ with tab_ciclos:
         & (df_trans["tipo"] == "Despesa")
     ].copy()
     for _, tr in df_ciclos_mes.iterrows():
+      pago_status = "🟢 Pago" if tr.get("pago") == 1 else "🟡 Pendente"
       itens_ciclo_todos.append({
           "id": tr["id"],
           "data": tr["data"],
@@ -854,6 +929,7 @@ with tab_ciclos:
           "categoria": tr["categoria"],
           "ciclo": tr["ciclo"],
           "valor": float(tr["valor"]),
+          "status": pago_status,
       })
 
   if not df_parcelas.empty:
@@ -898,6 +974,7 @@ with tab_ciclos:
                   "categoria": "Financiamento/Dívida",
                   "ciclo": ciclo_calc,
                   "valor": float(p_row["valor_parcela"]),
+                  "status": "🟡 Pendente",
               })
 
   if itens_ciclo_todos:
@@ -921,6 +998,7 @@ with tab_ciclos:
             "descricao",
             "metodo",
             "categoria",
+            "status",
             "valor",
         ]].copy()
         df_5_tab["valor"] = df_5_tab["valor"].map("R$ {:,.2f}".format)
@@ -947,6 +1025,7 @@ with tab_ciclos:
             "descricao",
             "metodo",
             "categoria",
+            "status",
             "valor",
         ]].copy()
         df_20_tab["valor"] = df_20_tab["valor"].map("R$ {:,.2f}".format)
@@ -964,7 +1043,7 @@ with tab_cartao:
     faturas = sorted(df_card["mes_fatura"].dropna().unique(), reverse=True)
     fat_sel = st.selectbox("Selecione a Fatura:", faturas)
 
-    df_fat_view = df_card[df_card["mes_fatura"] == fat_sel]
+    df_fat_view = df_card[df_card["mes_fatura"] == fat_sel].copy()
     st.metric(
         f"Valor Total da Fatura ({fat_sel})",
         f"R$ {df_fat_view['valor'].sum():,.2f}",
@@ -1360,7 +1439,6 @@ with tab_gestao:
             )
             ed_met = st.selectbox("Método", lista_met, index=idx_met)
 
-            # CAMPO DE MÊS DA FATURA (Corrige qualquer lançamento que tenha caído no mês errado)
             val_mes_fat = (
                 reg_avulso["mes_fatura"]
                 if reg_avulso["mes_fatura"]
