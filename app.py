@@ -23,7 +23,7 @@ def get_db():
 def init_db():
   with get_db() as conn:
     c = conn.cursor()
-    # 1. Usuários com Email e Celular para recuperação
+    # 1. Usuários
     c.execute("""
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,14 +112,12 @@ st.markdown(
             padding-bottom: 3rem !important; 
         }
 
-        /* Estilo das Abas */
         button[data-baseweb="tab"] {
             font-size: 1.05rem !important;
             padding: 10px 22px !important;
             font-weight: 600 !important;
         }
 
-        /* Card de Login Premium / Clean */
         .login-box {
             background: linear-gradient(160deg, rgba(26, 34, 53, 0.85), rgba(15, 23, 42, 0.98));
             backdrop-filter: blur(14px);
@@ -150,15 +148,8 @@ st.markdown(
         .login-subtitle {
             color: #94a3b8;
             font-size: 0.92rem;
-            letter-spacing: 0.2px;
         }
 
-        /* Botão sutil de recuperação estilo link */
-        div[data-testid="stDialog"] div {
-            border-radius: 16px;
-        }
-
-        /* Cards do Dashboard */
         .stMetric {
             background-color: #1e293b !important;
             border: 1px solid #334155 !important;
@@ -183,8 +174,6 @@ if "user_id" not in st.session_state:
   st.session_state["user_id"] = None
 if "user_nome" not in st.session_state:
   st.session_state["user_nome"] = None
-if "mostrar_recuperar" not in st.session_state:
-  st.session_state["mostrar_recuperar"] = False
 
 
 # --- Modal de Recuperação de Senha ---
@@ -241,7 +230,7 @@ def modal_recuperar_senha():
       st.warning("Preencha todos os campos para recuperar a senha.")
 
 
-# --- Tela de Autenticação Clean ---
+# --- Tela de Autenticação ---
 def tela_autenticacao():
   _, col_centro, _ = st.columns([1, 1.4, 1])
 
@@ -259,7 +248,6 @@ def tela_autenticacao():
 
     tab_log, tab_cad = st.tabs(["🔐 Acessar", "📝 Criar Conta"])
 
-    # 1. ABA DE LOGIN
     with tab_log:
       st.write("")
       u_log = st.text_input(
@@ -272,7 +260,6 @@ def tela_autenticacao():
           placeholder="Digite sua senha",
       )
 
-      # Link sutil alinhado à direita antes do botão
       col_esq, col_dir = st.columns([1, 1.3])
       with col_dir:
         st.markdown(
@@ -302,7 +289,6 @@ def tela_autenticacao():
         else:
           st.warning("Preencha usuário e senha.")
 
-    # 2. ABA DE CADASTRO COM BLOQUEIO DE DUPLICIDADE
     with tab_cad:
       st.write("")
       c_nome = st.text_input(
@@ -368,10 +354,7 @@ def tela_autenticacao():
                     ),
                 )
                 conn.commit()
-                st.success(
-                    "✅ Conta criada com sucesso! Mude para o separador"
-                    " 'Acessar'."
-                )
+                st.success("✅ Conta criada com sucesso! Acesse pela aba 'Acessar'.")
         else:
           st.warning("Preencha todos os campos obrigatórios.")
 
@@ -409,11 +392,11 @@ if tipo_mov == "Despesa":
       "Outros",
   ]
   metodos_disponiveis = [
+      "Boleto",
       "Cartão de Crédito",
       "Pix",
       "Cartão de Débito",
       "Dinheiro",
-      "Boleto",
   ]
 else:
   cats = ["Salário Principal", "Vale / Adiantamento", "Extra", "Outros"]
@@ -423,29 +406,31 @@ metodo_mov = st.sidebar.selectbox(
     "Forma de Pagamento", metodos_disponiveis, key="sb_metodo"
 )
 
+# Agora permite parcelas para QUALQUER despesa (Boleto, Cartão de Crédito, Pix, Débito)
 num_parcelas = 1
-fatura_inicio = date.today().strftime("%Y-%m")
+mes_inicio_parcela = date.today().strftime("%Y-%m")
 
-if tipo_mov == "Despesa" and metodo_mov == "Cartão de Crédito":
-  st.sidebar.markdown("💳 **Configuração do Cartão**")
+if tipo_mov == "Despesa":
+  st.sidebar.markdown("📅 **Parcelamento / Quantidade**")
   num_parcelas = st.sidebar.number_input(
       "Quantidade de Parcelas",
       min_value=1,
-      max_value=48,
+      max_value=360,
       value=1,
       step=1,
       key="sb_num_parc",
   )
-  fatura_inicio = st.sidebar.text_input(
-      "Mês da 1ª Fatura (AAAA-MM)",
-      value=date.today().strftime("%Y-%m"),
-      key="sb_fat_ini",
-  )
+  if num_parcelas > 1 or metodo_mov == "Cartão de Crédito":
+    mes_inicio_parcela = st.sidebar.text_input(
+        "Mês da 1ª Parcela/Fatura (AAAA-MM)",
+        value=date.today().strftime("%Y-%m"),
+        key="sb_mes_ini",
+    )
 
 with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
   data_mov = st.date_input("Data", value=date.today())
   desc_mov = st.text_input(
-      "Descrição", placeholder="Ex: Supermercado, Smartphone"
+      "Descrição", placeholder="Ex: Parcela Carro, Supermercado"
   )
   cat_mov = st.selectbox("Categoria", cats)
   ciclo_mov = st.selectbox(
@@ -463,20 +448,23 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
     if desc_mov.strip():
       with get_db() as conn:
         c = conn.cursor()
-        if (
-            tipo_mov == "Despesa"
-            and metodo_mov == "Cartão de Crédito"
-            and num_parcelas > 1
-        ):
+        # Se for parcelado em mais de 1x
+        if tipo_mov == "Despesa" and num_parcelas > 1:
           val_parcela = valor_mov / num_parcelas
           try:
-            dt_base = datetime.strptime(fatura_inicio.strip(), "%Y-%m")
+            dt_base = datetime.strptime(mes_inicio_parcela.strip(), "%Y-%m")
           except Exception:
             dt_base = datetime.now()
 
           for i in range(int(num_parcelas)):
             dt_fat = dt_base + relativedelta(months=i)
             fat_str = dt_fat.strftime("%Y-%m")
+            # Ajusta a data de vencimento mês a mês mantendo o dia original
+            try:
+              data_parcela = date_mov + relativedelta(months=i)
+            except Exception:
+              data_parcela = date_mov
+
             desc_parcelada = f"{desc_mov.strip()} ({i + 1}/{num_parcelas})"
             c.execute(
                 """
@@ -485,7 +473,7 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
                         """,
                 (
                     USER_ID,
-                    str(data_mov),
+                    str(data_parcela),
                     desc_parcelada,
                     tipo_mov,
                     cat_mov,
@@ -498,8 +486,9 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
                 ),
             )
         else:
+          # Lançamento à vista
           fat_unica = (
-              fatura_inicio if metodo_mov == "Cartão de Crédito" else None
+              mes_inicio_parcela if metodo_mov == "Cartão de Crédito" else None
           )
           c.execute(
               """
@@ -519,7 +508,7 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
               ),
           )
         conn.commit()
-      st.sidebar.success("Gravado com sucesso!")
+      st.sidebar.success("Registro gravado com sucesso!")
       st.rerun()
     else:
       st.sidebar.error("Informe a descrição.")
@@ -546,7 +535,7 @@ with get_db() as conn:
       params=(USER_ID,),
   )
 
-# 1. VISÃO GERAL (FOCO EXCLUSIVO NOS GASTOS DO MÊS)
+# 1. VISÃO GERAL (COMPROMISSOS DO MÊS)
 with tab_dash:
   st.subheader("📊 Gastos e Compromissos do Mês")
 
@@ -580,7 +569,7 @@ with tab_dash:
     ].copy()
     total_cartao_mes = df_cartao_mes["valor"].sum()
 
-  # 2. Financiamentos Ativos
+  # 2. Parcelas de Financiamentos Fixos Cadastrados
   total_financiamentos_mes = 0.0
   fin_ativos = pd.DataFrame()
   if not df_parcelas.empty:
@@ -589,12 +578,15 @@ with tab_dash:
     ].copy()
     total_financiamentos_mes = fin_ativos["valor_parcela"].sum()
 
-  # 3. Outras Contas Avulsas do Mês
+  # 3. Outros compromissos/boletos/despesas que vencem no mês
   total_outros_mes = 0.0
   df_outros_mes = pd.DataFrame()
   if not df_trans.empty:
     df_outros_mes = df_trans[
-        (df_trans["mes_ano"] == mes_selecionado)
+        (
+            (df_trans["mes_ano"] == mes_selecionado)
+            | (df_trans["mes_fatura"] == mes_selecionado)
+        )
         & (df_trans["tipo"] == "Despesa")
         & (df_trans["metodo"] != "Cartão de Crédito")
         & (df_trans["categoria"] != "Financiamento/Dívida")
@@ -605,11 +597,11 @@ with tab_dash:
       total_cartao_mes + total_financiamentos_mes + total_outros_mes
   )
 
-  # Métricas
+  # Cards de Resumo
   c1, c2, c3, c4 = st.columns(4)
   c1.metric("💳 Fatura do Cartão", f"R$ {total_cartao_mes:,.2f}")
   c2.metric("🚗 Parcela Financiamento", f"R$ {total_financiamentos_mes:,.2f}")
-  c3.metric("💸 Contas / Outros Gastos", f"R$ {total_outros_mes:,.2f}")
+  c3.metric("📄 Boletos / Outras Contas", f"R$ {total_outros_mes:,.2f}")
   c4.metric(
       f"🔥 TOTAL DO MÊS ({mes_selecionado})",
       f"R$ {total_gastos_mes:,.2f}",
@@ -638,26 +630,22 @@ with tab_dash:
       st.info("Nenhuma fatura de cartão prevista para este mês.")
 
   with col_det2:
-    st.write("##### 🚗 Parcelas de Financiamentos Ativos")
-    if not fin_ativos.empty:
-      fin_show = fin_ativos[[
-          "titulo",
-          "tipo_contrato",
-          "dia_vencimento",
-          "valor_parcela",
+    st.write("##### 📄 Boletos e Parcelas Deste Mês")
+    if not df_outros_mes.empty:
+      df_boletos_show = df_outros_mes[[
+          "data",
+          "descricao",
+          "metodo",
+          "parcela_atual",
+          "total_parcelas",
+          "valor",
       ]].copy()
-      fin_show.columns = [
-          "Contrato",
-          "Tipo",
-          "Dia Vencimento",
-          "Valor da Parcela",
-      ]
-      fin_show["Valor da Parcela"] = fin_show["Valor da Parcela"].map(
+      df_boletos_show["valor"] = df_boletos_show["valor"].map(
           "R$ {:,.2f}".format
       )
-      st.dataframe(fin_show, use_container_width=True, hide_index=True)
+      st.dataframe(df_boletos_show, use_container_width=True, hide_index=True)
     else:
-      st.info("Nenhum financiamento ativo pendente.")
+      st.info("Nenhum boleto ou despesa avulsa para este mês.")
 
 # 2. SEPARAÇÃO DIA 5 E DIA 20
 with tab_ciclos:
@@ -674,7 +662,14 @@ with tab_ciclos:
       df_5 = df_d[df_d["ciclo"] == "Dia 05"].copy()
       st.metric("Total no Dia 5", f"R$ {df_5['valor'].sum():,.2f}")
       if not df_5.empty:
-        df_5_tab = df_5[["id", "data", "descricao", "categoria", "valor"]].copy()
+        df_5_tab = df_5[[
+            "id",
+            "data",
+            "descricao",
+            "metodo",
+            "categoria",
+            "valor",
+        ]].copy()
         df_5_tab["valor"] = df_5_tab["valor"].map("R$ {:,.2f}".format)
         st.dataframe(df_5_tab, use_container_width=True, hide_index=True)
       else:
@@ -688,9 +683,14 @@ with tab_ciclos:
       df_20 = df_d[df_d["ciclo"] == "Dia 20"].copy()
       st.metric("Total no Dia 20", f"R$ {df_20['valor'].sum():,.2f}")
       if not df_20.empty:
-        df_20_tab = df_20[
-            ["id", "data", "descricao", "categoria", "valor"]
-        ].copy()
+        df_20_tab = df_20[[
+            "id",
+            "data",
+            "descricao",
+            "metodo",
+            "categoria",
+            "valor",
+        ]].copy()
         df_20_tab["valor"] = df_20_tab["valor"].map("R$ {:,.2f}".format)
         st.dataframe(df_20_tab, use_container_width=True, hide_index=True)
       else:
@@ -912,11 +912,11 @@ with tab_gestao:
           ed_cat = st.selectbox("Categoria", lista_cats, index=idx_cat)
 
           lista_met = [
-              "Pix",
+              "Boleto",
               "Cartão de Crédito",
+              "Pix",
               "Cartão de Débito",
               "Dinheiro",
-              "Boleto",
           ]
           idx_met = (
               lista_met.index(registro["metodo"])
