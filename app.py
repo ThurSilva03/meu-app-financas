@@ -94,25 +94,21 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        /* Ajuste do espaçamento do topo para não cortar as abas de navegação */
         .block-container { 
             padding-top: 5.5rem !important; 
             padding-bottom: 3.5rem !important; 
         }
-        
         button[data-baseweb="tab"] {
             font-size: 1.05rem !important;
             padding: 12px 18px !important;
             font-weight: 500 !important;
         }
-
         .stMetric {
             background-color: #1e293b !important;
             border: 1px solid #334155;
             border-radius: 10px;
             padding: 15px;
         }
-        
         .card-ciclo {
             background: #1e293b;
             padding: 16px;
@@ -125,7 +121,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Sessão de Login
+# Sessão
 if "user_id" not in st.session_state:
   st.session_state["user_id"] = None
 if "user_nome" not in st.session_state:
@@ -619,4 +615,68 @@ with tab_gestao:
 
   # SEÇÃO 1: Editar / Apagar Transações
   with sec_trans:
-    if not df_trans.empty
+    if not df_trans.empty:
+      opcoes_trans = {
+          f"#{r['id']} | {r['data']} | {r['descricao']} | R$ {r['valor']:.2f}": (
+              int(r["id"])
+          )
+          for _, r in df_trans.iterrows()
+      }
+      sel_label = st.selectbox(
+          "Escolha o lançamento:", list(opcoes_trans.keys()), key="sel_trans_ed"
+      )
+      id_edit = opcoes_trans[sel_label]
+      registro = df_trans[df_trans["id"] == id_edit].iloc[0]
+
+      st.markdown("---")
+      col_ed1, col_ed2 = st.columns(2)
+
+      with col_ed1:
+        st.write("##### Corrigir Informações")
+        with st.form("form_edita_transacao"):
+          ed_desc = st.text_input("Descrição", value=registro["descricao"])
+          try:
+            dt_val = datetime.strptime(str(registro["data"]), "%Y-%m-%d").date()
+          except Exception:
+            dt_val = date.today()
+          ed_data = st.date_input("Data", value=dt_val)
+
+          lista_tipos = ["Despesa", "Receita"]
+          idx_tipo = (
+              lista_tipos.index(registro["tipo"])
+              if registro["tipo"] in lista_tipos
+              else 0
+          )
+          ed_tipo = st.selectbox("Tipo", lista_tipos, index=idx_tipo)
+
+          lista_cats = [
+              "Alimentação",
+              "Moradia & Contas",
+              "Transporte & Veículo",
+              "Lazer & Compras",
+              "Saúde",
+              "Financiamento/Dívida",
+              "Salário Principal",
+              "Vale / Adiantamento",
+              "Outros",
+          ]
+          idx_cat = (
+              lista_cats.index(registro["categoria"])
+              if registro["categoria"] in lista_cats
+              else 0
+          )
+          ed_cat = st.selectbox("Categoria", lista_cats, index=idx_cat)
+
+          lista_met = [
+              "Pix",
+              "Cartão de Crédito",
+              "Cartão de Débito",
+              "Dinheiro",
+              "Boleto",
+          ]
+          idx_met = (
+              lista_met.index(registro["metodo"])
+              if registro["metodo"] in lista_met
+              else 0
+          )
+          ed_met = st
