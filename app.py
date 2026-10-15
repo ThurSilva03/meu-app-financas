@@ -1,4 +1,5 @@
 import hashlib
+import os
 import re
 import sqlite3
 from datetime import date, datetime
@@ -11,7 +12,10 @@ DB_NAME = "financas.db"
 
 # --- Funções de Segurança e Base de Dados ---
 def hash_password(password: str) -> str:
-  return hashlib.sha256(password.encode("utf-8")).hexdigest()
+  iterations = 260000
+  salt = os.urandom(16)
+  dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+  return f"pbkdf2_sha256${iterations}${salt.hex()}${dk.hex()}"
 
 
 def get_db():
