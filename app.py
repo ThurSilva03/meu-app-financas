@@ -12,16 +12,15 @@ DB_NAME = "financas.db"
 
 # --- Funções de Segurança e Base de Dados ---
 def hash_password(password: str) -> str:
-  iterations = 260000
-  salt = os.urandom(16)
-  dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-  return f"pbkdf2_sha256${iterations}${salt.hex()}${dk.hex()}"
+  # Hash consistente SHA-256
+  return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 def get_db():
-  conn = sqlite3.connect(DB_NAME, timeout=30.0)
+  conn = sqlite3.connect(DB_NAME, timeout=30.0, isolation_level=None)
   conn.row_factory = sqlite3.Row
   conn.execute("PRAGMA journal_mode=WAL;")
+  conn.execute("PRAGMA synchronous=NORMAL;")
   return conn
 
 
@@ -99,8 +98,6 @@ def init_db():
       c.execute("ALTER TABLE parcelamentos ADD COLUMN data_inicio TEXT")
     except sqlite3.OperationalError:
       pass
-
-    conn.commit()
 
 
 init_db()
@@ -183,11 +180,28 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Gestão de Sessão
+# --- Gestão de Sessão Persistente ---
 if "user_id" not in st.session_state:
   st.session_state["user_id"] = None
 if "user_nome" not in st.session_state:
   st.session_state["user_nome"] = None
+
+# Tenta recuperar sessão caso o usuário tenha marcado "Manter Conectado"
+if not st.session_state["user_id"]:
+  qp_user = st.query_params.get("u")
+  qp_key = st.query_params.get("k")
+  if qp_user and qp_key:
+    with get_db() as conn:
+      c = conn.cursor()
+      c.execute(
+          "SELECT id, nome, password_hash FROM usuarios WHERE lower(username)"
+          " = ?",
+          (str(qp_user).strip().lower(),),
+      )
+      recup = c.fetchone()
+      if recup and recup["password_hash"][:16] == qp_key:
+        st.session_state["user_id"] = int(recup["id"])
+        st.session_state["user_nome"] = str(recup["nome"])
 
 
 # --- Janela de Recuperação de Senha ---
@@ -235,7 +249,6 @@ def modal_recuperar_senha():
                 "UPDATE usuarios SET password_hash = ? WHERE id = ?",
                 (hash_password(r_new_pass.strip()), encontrado["id"]),
             )
-            conn.commit()
             st.success(
                 "🎉 Palavra-passe alterada com sucesso! Feche esta janela para"
                 " iniciar sessão."
@@ -278,8 +291,12 @@ def tela_autenticacao():
           placeholder="Introduza a sua palavra-passe",
       )
 
-      col_esq, col_dir = st.columns([1, 1.3])
-      with col_dir:
+      col_lembrar, col_esqueceu = st.columns([1.2, 1])
+      with col_lembrar:
+        manter_logado = st.checkbox(
+            "Lembrar acesso neste aparelho", value=True, key="chk_lembrar"
+        )
+      with col_esqueceu:
         st.markdown(
             "<div style='text-align: right; padding-top: 4px;'>",
             unsafe_allow_html=True,
@@ -294,13 +311,21 @@ def tela_autenticacao():
           with get_db() as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT id, nome, password_hash FROM usuarios WHERE lower(username) = ?",
+                "SELECT id, nome, password_hash FROM usuarios WHERE"
+                " lower(username) = ?",
                 (u_log.strip().lower(),),
             )
             usuario = c.fetchone()
             if usuario and usuario["password_hash"] == hash_password(p_log):
               st.session_state["user_id"] = int(usuario["id"])
               st.session_state["user_nome"] = str(usuario["nome"])
+
+              if manter_logado:
+                st.query_params["u"] = u_log.strip().lower()
+                st.query_params["k"] = usuario["password_hash"][:16]
+              else:
+                st.query_params.clear()
+
               st.rerun()
             else:
               st.error("Utilizador ou palavra-passe incorretos.")
@@ -371,8 +396,7 @@ def tela_autenticacao():
                         hash_password(c_pass),
                     ),
                 )
-                conn.commit()
-                st.success("✅ Conta registada com sucesso! Aceda ao separador 'Entrar'.")
+                st.success("✅ Conta registada com sucesso! Aceda à aba 'Entrar'.")
         else:
           st.warning("Preencha todos os campos obrigatórios.")
 
@@ -390,6 +414,7 @@ st.sidebar.markdown(f"### Olá, **{st.session_state['user_nome']}** 👋")
 if st.sidebar.button("Terminar Sessão"):
   st.session_state["user_id"] = None
   st.session_state["user_nome"] = None
+  st.query_params.clear()
   st.rerun()
 
 st.sidebar.divider()
@@ -507,7 +532,6 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
                 if num_parcelas > 1
                 else desc_mov.strip()
             )
-            # Todo lançamento entra como 0 (Pendente)
             c.execute(
                 """
                             INSERT INTO transacoes (usuario_id, data, descricao, tipo, categoria, metodo, ciclo, valor, mes_fatura, parcela_atual, total_parcelas, pago)
@@ -605,7 +629,6 @@ with st.sidebar.form("form_novo_lancamento", clear_on_submit=True):
               ),
           )
 
-        conn.commit()
       st.sidebar.success("Gravado com sucesso!")
       st.rerun()
     else:
@@ -631,7 +654,6 @@ if not df_trans.empty:
 else:
   df_trans["mes_ano"] = []
 
-# Mapeia todos os meses relevantes
 meses_set = set([date.today().strftime("%Y-%m")])
 if not df_trans.empty:
   for m in df_trans["mes_ano"].dropna():
@@ -667,7 +689,7 @@ tab_dash, tab_ciclos, tab_cartao, tab_parcelas, tab_gestao = st.tabs([
     "⚙️ Editar / Excluir",
 ])
 
-# 1. VISÃO GERAL DO MÊS (CONTROLO RIGOROSO DE PAGAMENTOS)
+# 1. VISÃO GERAL DO MÊS
 with tab_dash:
   st.subheader("📊 Gastos e Compromissos do Mês")
 
@@ -791,7 +813,6 @@ with tab_dash:
 
   pendente_mes = max(total_gastos_mes - total_pago_mes, 0.0)
 
-  # Cards de Métricas
   c1, c2, c3, c4 = st.columns(4)
   c1.metric("💳 Fatura do Cartão", f"R$ {total_cartao_mes:,.2f}")
   c2.metric("🚗 Parcela Financiamento", f"R$ {total_financiamentos_mes:,.2f}")
@@ -844,7 +865,6 @@ with tab_dash:
                   " ?",
                   (0 if esta_pago else 1, id_t, USER_ID),
               )
-              conn.commit()
             st.rerun()
     else:
       st.info("Nenhuma fatura de cartão prevista para este mês.")
@@ -897,7 +917,6 @@ with tab_dash:
                     " = ?",
                     (0 if esta_pago_b else 1, item_id, USER_ID),
                 )
-                conn.commit()
               st.rerun()
           else:
             st.caption("Contrato fixo")
@@ -1120,7 +1139,6 @@ with tab_parcelas:
                     str(c_dt_inicio),
                 ),
             )
-            conn.commit()
           st.success("Financiamento guardado com sucesso!")
           st.rerun()
         else:
@@ -1181,7 +1199,6 @@ with tab_parcelas:
                   " WHERE id = ?",
                   (cid,),
               )
-              conn.commit()
             st.success(f"Parcela #{pagas + 1} amortizada com sucesso!")
             st.rerun()
         else:
@@ -1333,7 +1350,6 @@ with tab_gestao:
                           USER_ID,
                       ),
                   )
-                conn.commit()
               st.success(
                   f"Todas as {len(ids_grupo)} parcelas foram atualizadas com"
                   " sucesso!"
@@ -1359,7 +1375,6 @@ with tab_gestao:
                   "DELETE FROM transacoes WHERE id = ? AND usuario_id = ?",
                   [(i, USER_ID) for i in ids_para_apagar],
               )
-              conn.commit()
             st.success(
                 f"Todas as {len(ids_para_apagar)} parcelas foram eliminadas!"
             )
@@ -1500,7 +1515,6 @@ with tab_gestao:
                         USER_ID,
                     ),
                 )
-                conn.commit()
               st.success("Registo atualizado com sucesso!")
               st.rerun()
 
@@ -1521,7 +1535,6 @@ with tab_gestao:
                   "DELETE FROM transacoes WHERE id = ? AND usuario_id = ?",
                   (id_avulsa, USER_ID),
               )
-              conn.commit()
             st.success("Registro eliminado com sucesso!")
             st.rerun()
       else:
@@ -1604,7 +1617,6 @@ with tab_gestao:
                       USER_ID,
                   ),
               )
-              conn.commit()
             st.success("Financiamento atualizado com sucesso!")
             st.rerun()
 
@@ -1625,7 +1637,6 @@ with tab_gestao:
                 "DELETE FROM parcelamentos WHERE id = ? AND usuario_id = ?",
                 (id_parc_edit, USER_ID),
             )
-            conn.commit()
           st.success("Contrato eliminado com sucesso!")
           st.rerun()
     else:
